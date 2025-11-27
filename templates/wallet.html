@@ -20,20 +20,10 @@
     </header>
 
     <section class="total-balance-section">
-        <p class="total-balance-amount">{{ totalWalletUSDValue or '$0.00' }}</p>
-
-        {% if totalPnLUSDFormatted %}
-            <p class="total-balance-pnl {{ totalPnLClass }}">
-                {{ totalPnLUSDFormatted }} 24h
-            </p>
-        {% endif %}
-
-        <p class="total-balance-label">
-            {% if walletAddresses and walletAddresses|length > 0 %}
-                Tracking {{ walletAddresses|length }} wallet{% if walletAddresses|length > 1 %}s{% endif %}
-            {% else %}
-                Add one or more EVM addresses below
-            {% endif %}
+        <p class="total-balance-amount" id="total-balance-amount">$0.00</p>
+        <p class="total-balance-pnl pnl-neutral" id="total-balance-pnl" style="display:none;">$0.00 24h</p>
+        <p class="total-balance-label" id="total-balance-label">
+            Add one or more EVM addresses below
         </p>
     </section>
 
@@ -42,14 +32,6 @@
         <div class="address-bar">
             <div class="address-input-container">
                 <div class="address-chips" id="address-chips">
-                    {% for addr in walletAddresses %}
-                        <span class="address-chip" data-address="{{ addr }}">
-                            <span class="address-chip-text">{{ addr[:6] }}...{{ addr[-4:] }}</span>
-                            <button class="address-chip-remove"
-                                    type="button"
-                                    data-address="{{ addr }}">×</button>
-                        </span>
-                    {% endfor %}
                     <input type="text"
                            id="address-input"
                            placeholder="Add wallet address and press Enter" />
@@ -62,136 +44,27 @@
     </section>
 
     <nav class="tabs">
-        <button class="tab-button {{ 'active' if currentTab == 'tokens' else '' }}" data-tab="tokens">Tokens</button>
-        <button class="tab-button {{ 'active' if currentTab == 'activity' else '' }}" data-tab="activity">Activity</button>
+        <button class="tab-button active" data-tab="tokens" id="tab-tokens">Tokens</button>
+        <button class="tab-button" data-tab="activity" id="tab-activity">Activity</button>
     </nav>
 
     <main class="tab-content">
         <!-- Tokens Tab Pane -->
-        <div id="tokens" class="tab-pane {{ 'active' if currentTab == 'tokens' else '' }}">
-            {% if tokens and tokens|length > 0 %}
-                {% for token in tokens %}
-                    <div class="list-item">
-                        {% if token.token_metadata and token.token_metadata.logo %}
-                            <img src="{{ token.token_metadata.logo }}"
-                                 alt="{{ token.symbol or 'Token' }} Logo"
-                                 class="item-icon-placeholder"
-                                 style="object-fit: contain; padding: 6px;">
-                        {% else %}
-                            <div class="item-icon-placeholder">
-                                {{ (token.symbol or '?')[:4] }}
-                            </div>
-                        {% endif %}
-                        <div class="item-info">
-                            {% if token.token_metadata and token.token_metadata.url %}
-                                <p class="item-name">
-                                    <a href="{{ token.token_metadata.url }}"
-                                       target="_blank"
-                                       style="color: inherit; text-decoration: none;">
-                                        {{ token.name or token.symbol }}
-                                    </a>
-                                </p>
-                            {% else %}
-                                <p class="item-name">{{ token.name or token.symbol }}</p>
-                            {% endif %}
-                            {% if token.chain_label %}
-                                <p class="item-chain">{{ token.chain_label }}</p>
-                            {% endif %}
-                        </div>
-                        <div class="item-value-right">
-                            <p class="item-usd-value">
-                                <strong>
-                                    {{ token.valueUSDFormatted or (token.value_usd if token.value_usd is not none else 'N/A') }}
-                                </strong>
-                            </p>
-                            <p class="item-sub-info">
-                                {{ token.amountFormatted or token.amount }} {{ token.symbol }}
-                            </p>
-
-                            {% if token.change24hBadgeLabel %}
-                                <span class="badge {{ token.change24hBadgeClass }}">
-                                    {{ token.change24hBadgeLabel }} 24h
-                                </span>
-                            {% endif %}
-                        </div>
-                    </div>
-                {% endfor %}
-            {% elif walletAddresses and walletAddresses|length > 0 %}
-                <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    No tokens found for the selected wallets.
-                </p>
-            {% else %}
+        <div id="tokens" class="tab-pane active">
+            <div id="tokens-list">
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
                     Add one or more wallet addresses above to see token balances.
                 </p>
-            {% endif %}
+            </div>
         </div>
 
         <!-- Activity Tab Pane -->
-        <div id="activity" class="tab-pane {{ 'active' if currentTab == 'activity' else '' }}">
-            {% if activities and activities|length > 0 %}
-                {% for activity in activities %}
-                    <div class="list-item">
-                        <div class="item-icon-placeholder">
-                            {% if activity.type == 'receive' %}
-                                ↓
-                            {% elif activity.type == 'send' %}
-                                ↑
-                            {% elif activity.type == 'call' %}
-                                ⇆
-                            {% else %}
-                                ✓
-                            {% endif %}
-                        </div>
-                        <div class="item-info">
-                            <p class="item-name activity-direction {{ activity.activityColorClass }}">
-                                {{ activity.activityTitle }}
-                            </p>
-
-                            <p class="activity-address">
-                                {% if activity.partyAddressShort %}
-                                    {{ activity.partyLabel }}
-                                    <span class="mono">{{ activity.partyAddressShort }}</span>
-                                {% else %}
-                                    Interaction
-                                {% endif %}
-                                {% if activity.source_wallet %}
-                                    <span class="mono" style="margin-left: 6px; font-size: 0.75em;">
-                                        ({{ activity.source_wallet[:6] }}...{{ activity.source_wallet[-4:] }})
-                                    </span>
-                                {% endif %}
-                            </p>
-
-                            <p class="activity-timestamp">
-                                <span class="mono">{{ activity.blockTimeDisplay or '' }}</span>
-                            </p>
-                        </div>
-                        <div class="item-value-right">
-                            {% if activity.type == 'call' %}
-                                <p class="activity-amount-right {{ activity.activityColorClass }}"
-                                   style="font-family: var(--font-primary);">
-                                    Interaction
-                                </p>
-                            {% elif activity.amountDisplay %}
-                                <p class="activity-amount-right {{ activity.activityColorClass }}">
-                                    {{ activity.directionPrefix }}{{ activity.amountDisplay }}
-                                    {% if activity.symbolDisplay %}
-                                        <span class="mono">{{ activity.symbolDisplay }}</span>
-                                    {% endif %}
-                                </p>
-                            {% endif %}
-                        </div>
-                    </div>
-                {% endfor %}
-            {% elif walletAddresses and walletAddresses|length > 0 %}
-                <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    No activity found for the selected wallets.
-                </p>
-            {% else %}
+        <div id="activity" class="tab-pane">
+            <div id="activity-list">
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
                     Add one or more wallet addresses above to see activity.
                 </p>
-            {% endif %}
+            </div>
         </div>
     </main>
 </div>
@@ -203,30 +76,24 @@
     const addressInput = document.getElementById('address-input');
     const searchButton = document.getElementById('address-search-button');
 
+    const totalBalanceAmountEl = document.getElementById('total-balance-amount');
+    const totalBalancePnlEl = document.getElementById('total-balance-pnl');
+    const totalBalanceLabelEl = document.getElementById('total-balance-label');
+
+    const tokensListEl = document.getElementById('tokens-list');
+    const activityListEl = document.getElementById('activity-list');
+
     let addressesState = [];
+    let currentTab = 'tokens';
+    let isLoading = false;
 
-    function getCurrentTab() {
-        const params = new URLSearchParams(window.location.search);
-        return params.get('tab') || 'tokens';
-    }
-
-    function getAddressesFromUrl() {
-        const params = new URLSearchParams(window.location.search);
-        return params.getAll('walletAddresses');
-    }
-
-    function updateQuery(addresses, tab) {
-        const params = new URLSearchParams();
-        addresses.forEach(addr => {
-            if (addr) params.append('walletAddresses', addr);
-        });
-        if (tab) params.set('tab', tab);
-        const qs = params.toString();
-        window.location.search = qs || '';
+    function setLoading(loading) {
+        isLoading = loading;
+        searchButton.disabled = loading;
+        searchButton.textContent = loading ? 'Loading...' : 'Search';
     }
 
     function renderChips() {
-        // Preserve the input element but rebuild the chips
         chipsContainer.innerHTML = '';
         addressesState.forEach(addr => {
             const chip = document.createElement('span');
@@ -244,16 +111,253 @@
         chipsContainer.appendChild(addressInput);
     }
 
-    // Tab switching: use addresses from URL (last searched state)
+    function renderHeader(data) {
+        const total = data.totalWalletUSDValue || '$0.00';
+        totalBalanceAmountEl.textContent = total;
+
+        const pnlText = data.totalPnLUSDFormatted;
+        if (pnlText) {
+            totalBalancePnlEl.textContent = `${pnlText} 24h`;
+            totalBalancePnlEl.className = `total-balance-pnl ${data.totalPnLClass || 'pnl-neutral'}`;
+            totalBalancePnlEl.style.display = 'block';
+        } else {
+            totalBalancePnlEl.style.display = 'none';
+        }
+
+        if (data.walletAddresses && data.walletAddresses.length > 0) {
+            const n = data.walletAddresses.length;
+            totalBalanceLabelEl.textContent = `Tracking ${n} wallet${n > 1 ? 's' : ''}`;
+        } else {
+            totalBalanceLabelEl.textContent = 'Add one or more EVM addresses below';
+        }
+    }
+
+    function renderTokens(tokens) {
+        if (!tokens || tokens.length === 0) {
+            if (addressesState.length > 0) {
+                tokensListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        No tokens found for the selected wallets.
+                    </p>
+                `;
+            } else {
+                tokensListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        Add one or more wallet addresses above to see token balances.
+                    </p>
+                `;
+            }
+            return;
+        }
+
+        let html = '';
+        tokens.forEach(token => {
+            const logo = token.token_metadata && token.token_metadata.logo;
+            const url = token.token_metadata && token.token_metadata.url;
+            const name = token.name || token.symbol || 'Token';
+            const symbol = token.symbol || '';
+            const valueUSD = token.valueUSDFormatted || (token.value_usd != null ? token.value_usd : 'N/A');
+            const amount = token.amountFormatted || token.amount || '';
+            const chainLabel = token.chain_label || '';
+            const badgeLabel = token.change24hBadgeLabel;
+            const badgeClass = token.change24hBadgeClass;
+
+            html += `
+                <div class="list-item">
+                    ${logo ? `
+                        <img src="${logo}"
+                             alt="${symbol || 'Token'} Logo"
+                             class="item-icon-placeholder"
+                             style="object-fit: contain; padding: 6px;">
+                    ` : `
+                        <div class="item-icon-placeholder">
+                            ${(symbol || '?').slice(0, 4)}
+                        </div>
+                    `}
+                    <div class="item-info">
+                        ${url ? `
+                            <p class="item-name">
+                                <a href="${url}" target="_blank" style="color: inherit; text-decoration: none;">
+                                    ${name}
+                                </a>
+                            </p>
+                        ` : `
+                            <p class="item-name">${name}</p>
+                        `}
+                        ${chainLabel ? `<p class="item-chain">${chainLabel}</p>` : ''}
+                    </div>
+                    <div class="item-value-right">
+                        <p class="item-usd-value">
+                            <strong>${valueUSD}</strong>
+                        </p>
+                        <p class="item-sub-info">
+                            ${amount} ${symbol}
+                        </p>
+                        ${badgeLabel ? `
+                            <span class="badge ${badgeClass}">
+                                ${badgeLabel} 24h
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        });
+
+        tokensListEl.innerHTML = html;
+    }
+
+    function renderActivities(activities) {
+        if (!activities || activities.length === 0) {
+            if (addressesState.length > 0) {
+                activityListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        No activity found for the selected wallets.
+                    </p>
+                `;
+            } else {
+                activityListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        Add one or more wallet addresses above to see activity.
+                    </p>
+                `;
+            }
+            return;
+        }
+
+        let html = '';
+        activities.forEach(activity => {
+            const icon = activity.type === 'receive' ? '↓'
+                : activity.type === 'send' ? '↑'
+                : activity.type === 'call' ? '⇆'
+                : '✓';
+
+            const title = activity.activityTitle || (activity.type || '').toUpperCase();
+            const colorClass = activity.activityColorClass || activity.type || '';
+            const partyShort = activity.partyAddressShort;
+            const partyLabel = activity.partyLabel || '';
+            const srcWallet = activity.source_wallet;
+            const blockTime = activity.blockTimeDisplay || '';
+            const amountDisplay = activity.amountDisplay;
+            const symbolDisplay = activity.symbolDisplay;
+            const dirPrefix = activity.directionPrefix || '';
+
+            html += `
+                <div class="list-item">
+                    <div class="item-icon-placeholder">${icon}</div>
+                    <div class="item-info">
+                        <p class="item-name activity-direction ${colorClass}">
+                            ${title}
+                        </p>
+                        <p class="activity-address">
+                            ${partyShort ? `
+                                ${partyLabel}
+                                <span class="mono">${partyShort}</span>
+                            ` : 'Interaction'}
+                            ${srcWallet ? `
+                                <span class="mono" style="margin-left: 6px; font-size: 0.75em;">
+                                    (${srcWallet.substring(0, 6)}...${srcWallet.substring(srcWallet.length - 4)})
+                                </span>
+                            ` : ''}
+                        </p>
+                        <p class="activity-timestamp">
+                            <span class="mono">${blockTime}</span>
+                        </p>
+                    </div>
+                    <div class="item-value-right">
+                        ${activity.type === 'call'
+                            ? `<p class="activity-amount-right ${colorClass}" style="font-family: var(--font-primary);">Interaction</p>`
+                            : amountDisplay
+                                ? `<p class="activity-amount-right ${colorClass}">
+                                       ${dirPrefix}${amountDisplay}
+                                       ${symbolDisplay ? `<span class="mono">${symbolDisplay}</span>` : ''}
+                                   </p>`
+                                : ''
+                        }
+                    </div>
+                </div>
+            `;
+        });
+
+        activityListEl.innerHTML = html;
+    }
+
+    async function fetchPortfolio() {
+        if (addressesState.length === 0) {
+            renderHeader({
+                walletAddresses: [],
+                totalWalletUSDValue: '$0.00',
+                totalPnLUSDFormatted: null,
+                totalPnLClass: 'pnl-neutral',
+            });
+            renderTokens([]);
+            renderActivities([]);
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const res = await fetch('/api/portfolio', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    walletAddresses: addressesState,
+                    tab: currentTab,
+                }),
+            });
+            const data = await res.json();
+
+            renderHeader(data);
+            renderTokens(data.tokens || []);
+            renderActivities(data.activities || []);
+        } catch (err) {
+            console.error(err);
+            // Minimal error UI
+            renderHeader({
+                walletAddresses: addressesState,
+                totalWalletUSDValue: '$0.00',
+                totalPnLUSDFormatted: null,
+                totalPnLClass: 'pnl-neutral',
+            });
+            if (currentTab === 'tokens') {
+                tokensListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        Error fetching data. Please try again.
+                    </p>
+                `;
+            } else {
+                activityListEl.innerHTML = `
+                    <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
+                        Error fetching data. Please try again.
+                    </p>
+                `;
+            }
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // Tab switching (no reload)
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const tab = button.dataset.tab;
-            const addresses = getAddressesFromUrl();
-            updateQuery(addresses, tab);
+            if (tab === currentTab) return;
+            currentTab = tab;
+
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            tabPanes.forEach(pane => pane.classList.remove('active'));
+
+            button.classList.add('active');
+            const pane = document.getElementById(tab);
+            if (pane) pane.classList.add('active');
+
+            // Re-fetch for the new tab using same addresses
+            fetchPortfolio();
         });
     });
 
-    // Add address locally on Enter, no API call yet
+    // Add address locally on Enter (no API call yet)
     addressInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -269,7 +373,7 @@
         }
     });
 
-    // Remove chip locally on click (no API yet)
+    // Remove chip locally
     document.addEventListener('click', (e) => {
         if (e.target.classList.contains('address-chip-remove')) {
             const addr = e.target.getAttribute('data-address');
@@ -278,29 +382,14 @@
         }
     });
 
-    // When Search is clicked, push addressesState into the URL and reload (API call)
+    // Search button triggers the API call (no URL changes, no reload)
     searchButton.addEventListener('click', () => {
-        const currentTab = getCurrentTab();
-        updateQuery(addressesState, currentTab);
+        fetchPortfolio();
     });
 
+    // Initial setup
     document.addEventListener('DOMContentLoaded', () => {
-        // Initialise addressesState from server-rendered chips (URL state)
-        addressesState = Array.from(document.querySelectorAll('.address-chip'))
-            .map(chip => chip.getAttribute('data-address'))
-            .filter(Boolean);
-
         renderChips();
-
-        const tab = getCurrentTab();
-        tabButtons.forEach(btn => btn.classList.remove('active'));
-        tabPanes.forEach(pane => pane.classList.remove('active'));
-
-        const activeButton = document.querySelector(`.tab-button[data-tab="${tab}"]`);
-        const activePane = document.getElementById(tab);
-
-        if (activeButton) activeButton.classList.add('active');
-        if (activePane) activePane.classList.add('active');
     });
 </script>
 </body>

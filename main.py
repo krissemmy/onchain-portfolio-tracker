@@ -9,9 +9,10 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi import Body
 
 from utils.prices import change1h, change6h, change24h, format_signed_percent
-
+from typing import Any, Dict, List, Optional
 # Load env vars
 load_dotenv()
 
@@ -428,23 +429,22 @@ async def get_portfolio(
 
 # ---------- Route ----------
 
-@app.get("/", response_class=HTMLResponse)
-async def wallet_view(
-    request: Request,
-    walletAddresses: List[str] = Query(default=[]),
-    walletAddress: Optional[str] = None,  # backward compat (single)
-    tab: str = "tokens",
-):
-    # Merge single + multi into one list
-    wallets_raw = list(walletAddresses)
-    if walletAddress:
-        wallets_raw.append(walletAddress)
+@app.post("/api/portfolio")
+async def api_portfolio(payload: dict = Body(...)):
+    """
+    JSON API: given a list of wallet addresses and a tab ('tokens' or 'activity'),
+    return aggregated portfolio data.
+    """
+    wallets_raw = payload.get("walletAddresses") or []
+    tab = payload.get("tab") or "tokens"
 
-    # Clean + dedupe
-    wallets: List[str] = []
+    # clean + dedupe
+    wallets = []
     seen = set()
     for w in wallets_raw:
-        w = w.strip()
+        if not w:
+            continue
+        w = str(w).strip()
         if not w:
             continue
         lw = w.lower()
@@ -452,53 +452,67 @@ async def wallet_view(
             seen.add(lw)
             wallets.append(w)
 
-    tokens: List[Dict[str, Any]] = []
-    activities: List[Dict[str, Any]] = []
-    total_wallet_usd_value_num: float = 0.0
-    error_message: Optional[str] = None
+    if not wallets:
+        return {
+            "walletAddresses": [],
+            "currentTab": tab,
+            "totalWalletUSDValue": format_usd(0.0),
+            "totalPnLUSD": 0.0,
+            "totalPnLUSDFormatted": None,
+            "totalPnLClass": "pnl-neutral",
+            "tokens": [],
+            "activities": [],
+        }
 
-    if wallets:
-        try:
-            tokens, activities, total_wallet_usd_value_num, total_pnl_usd_value = await get_portfolio(
-                wallets,
-                include_historical_prices=(tab == "tokens"),
-            )
-        except Exception as e:
-            total_pnl_usd_value = 0.0
-            print("Error in route handler:", e)
-            error_message = "Failed to fetch wallet data. Please try again."
-    else:
-        total_pnl_usd_value = 0.0
+    try:
+        tokens, activities, total_value_num, total_pnl_num = await get_portfolio(
+            wallets,
+            include_historical_prices=(tab == "tokens"),
+        )
+    except Exception as e:
+        print("Error in /api/portfolio:", e)
+        return {
+            "walletAddresses": wallets,
+            "currentTab": tab,
+            "totalWalletUSDValue": format_usd(0.0),
+            "totalPnLUSD": 0.0,
+            "totalPnLUSDFormatted": None,
+            "totalPnLClass": "pnl-neutral",
+            "tokens": [],
+            "activities": [],
+            "error": "Failed to fetch wallet data. Please try again.",
+        }
 
-    total_wallet_usd_value = format_usd(total_wallet_usd_value_num)
-    total_pnl_usd_formatted = format_signed_currency(total_pnl_usd_value) if wallets else None
+    total_wallet_usd_value = format_usd(total_value_num)
+    total_pnl_usd_formatted = format_signed_currency(total_pnl_num)
 
     total_pnl_class = "pnl-neutral"
-    if wallets and total_pnl_usd_value != 0:
-        total_pnl_class = "pnl-up" if total_pnl_usd_value > 0 else "pnl-down"
+    if total_pnl_num != 0:
+        total_pnl_class = "pnl-up" if total_pnl_num > 0 else "pnl-down"
 
-
-    context = {
-        "request": request,
+    return {
         "walletAddresses": wallets,
         "currentTab": tab,
         "totalWalletUSDValue": total_wallet_usd_value,
-        "tokens": tokens,
-        "activities": activities,
-        "errorMessage": error_message,
-        "change1h": change1h,
-        "change6h": change6h,
-        "change24h": change24h,
-        "formatSignedPercent": format_signed_percent,
-        "totalPnLUSD": total_pnl_usd_value,
+        "totalPnLUSD": total_pnl_num,
         "totalPnLUSDFormatted": total_pnl_usd_formatted,
         "totalPnLClass": total_pnl_class,
-        "helpers": {
-            "change1h": change1h,
-            "change6h": change6h,
-            "change24h": change24h,
-            "formatSignedPercent": format_signed_percent,
-        },
+        "tokens": tokens,
+        "activities": activities,
     }
 
+
+@app.get("/", response_class=HTMLResponse)
+async def wallet_view(request: Request):
+    context = {
+        "request": request,
+        "walletAddresses": [],
+        "currentTab": "tokens",
+        "totalWalletUSDValue": None,
+        "totalPnLUSD": None,
+        "totalPnLUSDFormatted": None,
+        "totalPnLClass": "pnl-neutral",
+        "tokens": [],
+        "activities": [],
+    }
     return templates.TemplateResponse("wallet.html", context)
