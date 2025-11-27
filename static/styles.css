@@ -476,3 +476,14 @@
         color: var(--color-text-muted);
     }
     
+    .info-banner {
+        font-family: var(--font-primary);
+        font-size: 0.8em;
+        color: var(--color-text-muted);
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--color-border-secondary);
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin: 10px 0 4px 0;
+    }
+    

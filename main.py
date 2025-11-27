@@ -13,6 +13,8 @@ from fastapi import Body
 
 from utils.prices import change1h, change6h, change24h, format_signed_percent
 from typing import Any, Dict, List, Optional
+import re
+from base58 import b58decode
 # Load env vars
 load_dotenv()
 
@@ -27,8 +29,34 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+EVM_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # ---------- Helpers ----------
+
+
+def detect_chain_type(address: str) -> str:
+    """
+    Returns: 'evm', 'svm', or 'unknown'
+    """
+
+    addr = address.strip()
+
+    # EVM
+    if EVM_RE.match(addr):
+        return "evm"
+
+    # SVM pattern → verify base58 decoding
+    if BASE58_RE.match(addr):
+        try:
+            decoded = b58decode(addr)
+            if len(decoded) in (32, 64):  # Solana address / PDA
+                return "svm"
+        except Exception:
+            pass
+
+    return "unknown"
+
 
 def format_usd(value: Optional[float]) -> Optional[str]:
     if value is None:
@@ -74,11 +102,11 @@ def get_chain_label(token: Dict[str, Any]) -> str:
     """
     Get Chain Name
     """
-    chain_code = token.get("chain")
+    chain_name = token.get("chain")
 
     # If we have a string like "base", "ethereum"
-    if isinstance(chain_code, str) and not str(chain_code).isdigit():
-        return chain_code.capitalize()
+    if isinstance(chain_name, str) and not str(chain_name).isdigit():
+        return chain_name.capitalize()
     else:
         return "Unknown chain"
 
@@ -203,6 +231,104 @@ async def get_wallet_balances(
                 "valueUSDNumeric": value_usd if value_usd is not None else 0.0,
             }
         )
+
+    return enriched
+
+async def get_svm_balances(wallet_address: str) -> List[Dict[str, Any]]:
+    """
+    Fetch SVM (Solana / Eclipse) balances for a given address.
+    Endpoint: https://api.sim.dune.com/beta/svm/balances/{address}
+
+    Returns tokens enriched similarly to get_wallet_balances():
+      - amountNumeric
+      - valueUSDNumeric
+      - valueUSDFormatted
+      - amountFormatted
+      - change24h = None (no historical yet)
+    """
+    if not wallet_address:
+        return []
+
+    url = f"https://api.sim.dune.com/beta/svm/balances/{wallet_address}"
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "X-Sim-Api-Key": SIM_API_KEY,
+                    "Content-Type": "application/json",
+                },
+            )
+        if resp.status_code != 200:
+            print(
+                "SVM balances request failed:",
+                resp.status_code,
+                resp.text[:500],
+            )
+            return []
+        data = resp.json()
+    except Exception as e:
+        print("Error fetching SVM balances:", e)
+        return []
+
+    balances = data.get("balances") or []
+    enriched: List[Dict[str, Any]] = []
+
+    for token in balances:
+        t = dict(token)
+
+        # Chain marker
+        chain = (t.get("chain") or "").lower()
+        t["chain"] = chain
+
+        # Normalise identifiers so your token_key works
+        # (chain_id can be a string for SVM, contract_address uses mint/address)
+        chain_id = t.get("chain_id")
+        if chain_id is None:
+            chain_id = chain or "svm"
+        t["chain_id"] = chain_id
+
+        contract_addr = t.get("contract_address") or t.get("mint") or t.get("address") or "svm-native"
+        t["contract_address"] = contract_addr
+        t["asset_type"] = t.get("asset_type") or "svm"
+
+        # decimals + amountNumeric
+        decimals_raw = t.get("decimals")
+        amount_raw = t.get("amount")
+        decimals = None
+        amount_numeric = None
+        try:
+            if decimals_raw is not None:
+                decimals = int(decimals_raw)
+            if amount_raw is not None and decimals is not None and decimals >= 0:
+                amt_dec = safe_decimal(amount_raw)
+                if amt_dec is not None:
+                    amount_numeric = float(amt_dec / (Decimal(10) ** decimals))
+        except Exception:
+            amount_numeric = None
+
+        # valueUSDNumeric
+        value_usd_raw = t.get("value_usd")
+        value_usd_num = None
+        d_val = safe_decimal(value_usd_raw)
+        if d_val is not None:
+            value_usd_num = float(d_val)
+
+        # display formatting
+        t["amountNumeric"] = amount_numeric or 0.0
+        t["valueUSDNumeric"] = value_usd_num or 0.0
+        t["valueUSDFormatted"] = format_usd(value_usd_num) if value_usd_num is not None else None
+        t["amountFormatted"] = (
+            format_amount_short(amount_numeric) if amount_numeric is not None else None
+        )
+
+        # No historical_prices for SVM yet
+        t["change24h"] = None
+        t["change24hBadgeLabel"] = None
+        t["change24hBadgeClass"] = "badge-neutral"
+
+        enriched.append(t)
 
     return enriched
 
@@ -372,13 +498,25 @@ def token_key(token: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
 async def get_portfolio(
     wallets: List[str],
     include_historical_prices: bool,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float]:
     portfolio_tokens: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
     all_activities: List[Dict[str, Any]] = []
 
     for addr in wallets:
-        tokens = await get_wallet_balances(addr, include_historical_prices)
-        activities = await get_wallet_activity(addr, 25)
+        chain_type = detect_chain_type(addr)
+        # EVM Address
+        if chain_type == "evm":
+            tokens = await get_wallet_balances(addr, include_historical_prices)
+            activities = await get_wallet_activity(addr, 25)
+        # SVM Address
+        elif chain_type == "svm":
+            tokens = await get_svm_balances(addr)
+            activities = [] 
+
+        else:
+            # unknown or invalid address
+            tokens = []
+            activities = []
 
         for t in tokens:
             key = token_key(t)
@@ -408,11 +546,14 @@ async def get_portfolio(
         t["value_usd"] = t.get("valueUSDNumeric", 0.0)
         t["valueUSDFormatted"] = format_usd(t["value_usd"])
         t["amountFormatted"] = format_amount_short(t.get("amountNumeric", 0.0))
+        # make sure chain label is set for EVM + SVM
+        t["chain_label"] = get_chain_label(t)
         aggregated_tokens.append(t)
 
     total_value = sum(t.get("valueUSDNumeric", 0.0) for t in portfolio_tokens.values())
 
     # total 24h PnL across all tokens (Σ value * pct_change)
+    # For SVM tokens, change24h will be None, so they naturally contribute 0 here.
     total_pnl_24h = 0.0
     for t in portfolio_tokens.values():
         change_pct = t.get("change24h")
@@ -424,6 +565,7 @@ async def get_portfolio(
     all_activities.sort(key=lambda x: x.get("block_time") or "", reverse=True)
 
     return aggregated_tokens, all_activities, total_value, total_pnl_24h
+
 
 
 
