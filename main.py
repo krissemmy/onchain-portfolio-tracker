@@ -17,7 +17,6 @@ from utils.prices import change1h, change6h, change24h, format_signed_percent
 load_dotenv()
 
 SIM_API_KEY = os.getenv("SIM_API_KEY")
-OPENSEA_API_KEY = os.getenv("OPENSEA_API_KEY")
 
 if not SIM_API_KEY:
     raise RuntimeError("FATAL ERROR: SIM_API_KEY is not set in environment (.env)")
@@ -38,7 +37,7 @@ def format_usd(value: Optional[float]) -> Optional[str]:
 
 
 def format_amount_short(amount: Optional[float]) -> Optional[str]:
-    """Very rough numbro-like formatting: 1234 -> '1.23K' etc."""
+    """Simple numbro-like formatting: 1234 -> '1.23K', 1_000_000 -> '1.00M'."""
     if amount is None:
         return None
     n = float(amount)
@@ -126,7 +125,6 @@ async def get_wallet_balances(
             if amount_raw is not None and decimals is not None and decimals >= 0:
                 amount_int = safe_decimal(amount_raw)
                 if amount_int is not None:
-                    # amount_raw is already integer-like, adjust by decimals
                     amount_numeric = float(amount_int / (Decimal(10) ** decimals))
         except Exception:
             amount_numeric = None
@@ -139,7 +137,9 @@ async def get_wallet_balances(
             value_usd = float(d_value)
 
         value_usd_formatted = format_usd(value_usd)
-        amount_formatted = format_amount_short(amount_numeric) if amount_numeric is not None else None
+        amount_formatted = (
+            format_amount_short(amount_numeric) if amount_numeric is not None else None
+        )
 
         # 24h change badge
         price = None
@@ -161,6 +161,7 @@ async def get_wallet_balances(
         badge_class = "badge-up" if (d24 or 0) >= 0 else "badge-down"
         badge_label = format_signed_percent(d24) if d24 is not None else None
 
+        # Filter out RTFKT like original
         if token.get("symbol") == "RTFKT":
             continue
 
@@ -325,100 +326,7 @@ async def get_wallet_activity(wallet_address: str, limit: int = 25) -> List[Dict
     return normalized
 
 
-async def get_wallet_collectibles(wallet_address: str, limit: int = 50) -> List[Dict[str, Any]]:
-    if not wallet_address:
-        return []
-
-    url = f"https://api.sim.dune.com/v1/evm/collectibles/{wallet_address}?limit={limit}"
-    headers = {
-        "X-Sim-Api-Key": SIM_API_KEY,
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        try:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                body = resp.text
-                print(f"Collectibles API failed {resp.status_code}: {resp.reason_phrase} {body}")
-                return []
-            data = resp.json()
-        except Exception as e:
-            print("Error fetching wallet collectibles:", e)
-            return []
-
-    collectibles = data.get("entries", []) or []
-    enriched: List[Dict[str, Any]] = []
-
-    # If no OpenSea key, just return raw collectibles (no image)
-    if not OPENSEA_API_KEY:
-        return [
-            {
-                **c,
-                "image_url": None,
-                "opensea_url": None,
-                "description": None,
-                "collection_name": c.get("name"),
-            }
-            for c in collectibles
-        ]
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for c in collectibles:
-            chain = c.get("chain")
-            contract = c.get("contract_address")
-            token_id = c.get("token_id")
-            base = {
-                **c,
-                "image_url": None,
-                "opensea_url": None,
-                "description": None,
-                "collection_name": c.get("name"),
-            }
-
-            if not chain or not contract or not token_id:
-                enriched.append(base)
-                continue
-
-            open_sea_url = (
-                f"https://api.opensea.io/api/v2/chain/{chain}/contract/{contract}/nfts/{token_id}"
-            )
-
-            try:
-                os_resp = await client.get(
-                    open_sea_url,
-                    headers={
-                        "Accept": "application/json",
-                        "x-api-key": OPENSEA_API_KEY,
-                    },
-                )
-                if os_resp.status_code != 200:
-                    enriched.append(base)
-                    continue
-
-                os_data = os_resp.json()
-                nft = os_data.get("nft", {})
-                enriched.append(
-                    {
-                        **c,
-                        "image_url": nft.get("image_url"),
-                        "opensea_url": nft.get("opensea_url"),
-                        "description": nft.get("description"),
-                        "collection_name": nft.get("collection") or c.get("name"),
-                    }
-                )
-            except Exception as e:
-                print(
-                    f"Error fetching OpenSea data for {chain}:{contract}:{token_id}:",
-                    e,
-                )
-                enriched.append(base)
-
-    # Filter out collectibles without images, like in JS version
-    return [c for c in enriched if c.get("image_url")]
-
-
-# ---------- Routes ----------
+# ---------- Route ----------
 
 @app.get("/", response_class=HTMLResponse)
 async def wallet_view(
@@ -428,25 +336,16 @@ async def wallet_view(
 ):
     tokens: List[Dict[str, Any]] = []
     activities: List[Dict[str, Any]] = []
-    collectibles: List[Dict[str, Any]] = []
     total_wallet_usd_value_num: float = 0.0
     error_message: Optional[str] = None
 
     if walletAddress:
         try:
-            tokens, activities, collectibles = await httpx.AsyncClient().gather(
-                # (this pattern is new in 0.28; to keep it simple, just await sequentially)
+            tokens = await get_wallet_balances(
+                walletAddress,
+                include_historical_prices=(tab == "tokens"),
             )
-        except Exception:
-            # simpler: call sequentially for now (less fancy, more explicit)
-            pass
-
-    # simpler and explicit: sequential calls, less magic
-    if walletAddress:
-        try:
-            tokens = await get_wallet_balances(walletAddress, include_historical_prices=(tab == "tokens"))
             activities = await get_wallet_activity(walletAddress, 25)
-            collectibles = await get_wallet_collectibles(walletAddress, 50)
 
             for tkn in tokens:
                 v_raw = tkn.get("value_usd")
@@ -467,9 +366,7 @@ async def wallet_view(
         "totalWalletUSDValue": total_wallet_usd_value,
         "tokens": tokens,
         "activities": activities,
-        "collectibles": collectibles,
         "errorMessage": error_message,
-        # helpers (if you want to call them in template)
         "change1h": change1h,
         "change6h": change6h,
         "change24h": change24h,
