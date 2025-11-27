@@ -1,12 +1,11 @@
-# main.py
 import os
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -70,7 +69,19 @@ def safe_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-# ---------- SIM API calls ----------
+def get_chain_label(token: Dict[str, Any]) -> str:
+    """
+    Get Chain Name
+    """
+    chain_code = token.get("chain")
+
+    # If we have a string like "base", "ethereum"
+    if isinstance(chain_code, str) and not str(chain_code).isdigit():
+        return chain_code.capitalize()
+    else:
+        return "Unknown chain"
+
+# ---------- SIM API calls for a single wallet ----------
 
 async def get_wallet_balances(
     wallet_address: str,
@@ -143,7 +154,6 @@ async def get_wallet_balances(
 
         # 24h change badge
         price = None
-        hist = None
 
         price_usd = token.get("price_usd")
         token_metadata = token.get("token_metadata") or {}
@@ -173,6 +183,10 @@ async def get_wallet_balances(
                 "change24h": d24,
                 "change24hBadgeClass": badge_class if show_badge else None,
                 "change24hBadgeLabel": badge_label if show_badge else None,
+                "chain_label": get_chain_label(token),
+                # numeric helpers for aggregation
+                "amountNumeric": amount_numeric if amount_numeric is not None else 0.0,
+                "valueUSDNumeric": value_usd if value_usd is not None else 0.0,
             }
         )
 
@@ -326,33 +340,107 @@ async def get_wallet_activity(wallet_address: str, limit: int = 25) -> List[Dict
     return normalized
 
 
+# ---------- Aggregation across multiple wallets ----------
+
+def token_key(token: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
+    """
+    Key to identify 'same token' across wallets.
+    Uses chain + contract + asset_type + symbol.
+    """
+    return (
+        token.get("chain_id"),
+        token.get("contract_address"),
+        token.get("asset_type"),
+        token.get("symbol"),
+    )
+
+
+async def get_portfolio(
+    wallets: List[str],
+    include_historical_prices: bool,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float]:
+    portfolio_tokens: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
+    all_activities: List[Dict[str, Any]] = []
+
+    for addr in wallets:
+        tokens = await get_wallet_balances(addr, include_historical_prices)
+        activities = await get_wallet_activity(addr, 25)
+
+        for t in tokens:
+            key = token_key(t)
+            amount_num = float(t.get("amountNumeric") or 0.0)
+            value_num = float(t.get("valueUSDNumeric") or 0.0)
+
+            existing = portfolio_tokens.get(key)
+            if existing is None:
+                new_tok = dict(t)
+                new_tok["amountNumeric"] = amount_num
+                new_tok["valueUSDNumeric"] = value_num
+                new_tok["source_wallets"] = [addr]
+                portfolio_tokens[key] = new_tok
+            else:
+                existing["amountNumeric"] += amount_num
+                existing["valueUSDNumeric"] += value_num
+                if addr not in existing["source_wallets"]:
+                    existing["source_wallets"].append(addr)
+
+        for a in activities:
+            a = dict(a)
+            a["source_wallet"] = addr
+            all_activities.append(a)
+
+    aggregated_tokens: List[Dict[str, Any]] = []
+    for t in portfolio_tokens.values():
+        t["value_usd"] = t.get("valueUSDNumeric", 0.0)
+        t["valueUSDFormatted"] = format_usd(t["value_usd"])
+        t["amountFormatted"] = format_amount_short(t.get("amountNumeric", 0.0))
+        aggregated_tokens.append(t)
+
+    total_value = sum(t.get("valueUSDNumeric", 0.0) for t in portfolio_tokens.values())
+
+    aggregated_tokens.sort(key=lambda x: x.get("valueUSDNumeric", 0.0), reverse=True)
+    all_activities.sort(key=lambda x: x.get("block_time") or "", reverse=True)
+
+    return aggregated_tokens, all_activities, total_value
+
+
 # ---------- Route ----------
 
 @app.get("/", response_class=HTMLResponse)
 async def wallet_view(
     request: Request,
-    walletAddress: Optional[str] = None,
+    walletAddresses: List[str] = Query(default=[]),
+    walletAddress: Optional[str] = None,  # backward compat (single)
     tab: str = "tokens",
 ):
+    # Merge single + multi into one list
+    wallets_raw = list(walletAddresses)
+    if walletAddress:
+        wallets_raw.append(walletAddress)
+
+    # Clean + dedupe
+    wallets: List[str] = []
+    seen = set()
+    for w in wallets_raw:
+        w = w.strip()
+        if not w:
+            continue
+        lw = w.lower()
+        if lw not in seen:
+            seen.add(lw)
+            wallets.append(w)
+
     tokens: List[Dict[str, Any]] = []
     activities: List[Dict[str, Any]] = []
     total_wallet_usd_value_num: float = 0.0
     error_message: Optional[str] = None
 
-    if walletAddress:
+    if wallets:
         try:
-            tokens = await get_wallet_balances(
-                walletAddress,
+            tokens, activities, total_wallet_usd_value_num = await get_portfolio(
+                wallets,
                 include_historical_prices=(tab == "tokens"),
             )
-            activities = await get_wallet_activity(walletAddress, 25)
-
-            for tkn in tokens:
-                v_raw = tkn.get("value_usd")
-                d_val = safe_decimal(v_raw)
-                if d_val is not None:
-                    total_wallet_usd_value_num += float(d_val)
-
         except Exception as e:
             print("Error in route handler:", e)
             error_message = "Failed to fetch wallet data. Please try again."
@@ -361,7 +449,7 @@ async def wallet_view(
 
     context = {
         "request": request,
-        "walletAddress": walletAddress,
+        "walletAddresses": wallets,
         "currentTab": tab,
         "totalWalletUSDValue": total_wallet_usd_value,
         "tokens": tokens,

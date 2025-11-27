@@ -1,10 +1,9 @@
-<!-- templates/wallet.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Sim APIs Wallet UI - A simple and elegant wallet interface for viewing crypto assets and transactions">
+    <meta name="description" content="Sim APIs Wallet UI - Portfolio across multiple wallets">
     <meta name="theme-color" content="#0b0e1f">
     <title>Sim APIs Wallet UI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,9 +21,37 @@
 
     <section class="total-balance-section">
         <p class="total-balance-amount">{{ totalWalletUSDValue or '$0.00' }}</p>
-        <p class="total-balance-label js-wallet-address-display">
-            {{ walletAddress or 'Enter wallet address...' }}
+        <p class="total-balance-label">
+            {% if walletAddresses and walletAddresses|length > 0 %}
+                Tracking {{ walletAddresses|length }} wallet{% if walletAddresses|length > 1 %}s{% endif %}
+            {% else %}
+                Add one or more EVM addresses below
+            {% endif %}
         </p>
+    </section>
+
+    <!-- Multi-address input -->
+    <section class="address-section">
+        <div class="address-bar">
+            <div class="address-input-container">
+                <div class="address-chips" id="address-chips">
+                    {% for addr in walletAddresses %}
+                        <span class="address-chip" data-address="{{ addr }}">
+                            <span class="address-chip-text">{{ addr[:6] }}...{{ addr[-4:] }}</span>
+                            <button class="address-chip-remove"
+                                    type="button"
+                                    data-address="{{ addr }}">×</button>
+                        </span>
+                    {% endfor %}
+                    <input type="text"
+                           id="address-input"
+                           placeholder="Add wallet address and press Enter" />
+                </div>
+            </div>
+            <button class="address-search-button" id="address-search-button" type="button">
+                Search
+            </button>
+        </div>
     </section>
 
     <nav class="tabs">
@@ -60,6 +87,9 @@
                             {% else %}
                                 <p class="item-name">{{ token.name or token.symbol }}</p>
                             {% endif %}
+                            {% if token.chain_label %}
+                                <p class="item-chain">{{ token.chain_label }}</p>
+                            {% endif %}
                         </div>
                         <div class="item-value-right">
                             <p class="item-usd-value">
@@ -71,7 +101,6 @@
                                 {{ token.amountFormatted or token.amount }} {{ token.symbol }}
                             </p>
 
-                            {# 24h change badge #}
                             {% if token.change24hBadgeLabel %}
                                 <span class="badge {{ token.change24hBadgeClass }}">
                                     {{ token.change24hBadgeLabel }} 24h
@@ -80,13 +109,13 @@
                         </div>
                     </div>
                 {% endfor %}
-            {% elif walletAddress %}
+            {% elif walletAddresses and walletAddresses|length > 0 %}
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    No tokens found for this wallet.
+                    No tokens found for the selected wallets.
                 </p>
             {% else %}
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    Enter a wallet address above to see token balances.
+                    Add one or more wallet addresses above to see token balances.
                 </p>
             {% endif %}
         </div>
@@ -119,6 +148,11 @@
                                 {% else %}
                                     Interaction
                                 {% endif %}
+                                {% if activity.source_wallet %}
+                                    <span class="mono" style="margin-left: 6px; font-size: 0.75em;">
+                                        ({{ activity.source_wallet[:6] }}...{{ activity.source_wallet[-4:] }})
+                                    </span>
+                                {% endif %}
                             </p>
 
                             <p class="activity-timestamp">
@@ -142,13 +176,13 @@
                         </div>
                     </div>
                 {% endfor %}
-            {% elif walletAddress %}
+            {% elif walletAddresses and walletAddresses|length > 0 %}
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    No activity found for this wallet.
+                    No activity found for the selected wallets.
                 </p>
             {% else %}
                 <p style="text-align: center; padding-top: 30px; color: var(--color-text-muted);">
-                    Enter a wallet address to see activity.
+                    Add one or more wallet addresses above to see activity.
                 </p>
             {% endif %}
         </div>
@@ -158,40 +192,100 @@
 <script>
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabPanes = document.querySelectorAll('.tab-pane');
-    const walletAddressDisplay = document.querySelector(".js-wallet-address-display");
+    const chipsContainer = document.getElementById('address-chips');
+    const addressInput = document.getElementById('address-input');
+    const searchButton = document.getElementById('address-search-button');
 
+    let addressesState = [];
+
+    function getCurrentTab() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('tab') || 'tokens';
+    }
+
+    function getAddressesFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return params.getAll('walletAddresses');
+    }
+
+    function updateQuery(addresses, tab) {
+        const params = new URLSearchParams();
+        addresses.forEach(addr => {
+            if (addr) params.append('walletAddresses', addr);
+        });
+        if (tab) params.set('tab', tab);
+        const qs = params.toString();
+        window.location.search = qs || '';
+    }
+
+    function renderChips() {
+        // Preserve the input element but rebuild the chips
+        chipsContainer.innerHTML = '';
+        addressesState.forEach(addr => {
+            const chip = document.createElement('span');
+            chip.className = 'address-chip';
+            chip.dataset.address = addr;
+            const short = addr.length > 10
+                ? addr.substring(0, 6) + '...' + addr.substring(addr.length - 4)
+                : addr;
+            chip.innerHTML = `
+                <span class="address-chip-text">${short}</span>
+                <button class="address-chip-remove" type="button" data-address="${addr}">×</button>
+            `;
+            chipsContainer.appendChild(chip);
+        });
+        chipsContainer.appendChild(addressInput);
+    }
+
+    // Tab switching: use addresses from URL (last searched state)
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const tab = button.dataset.tab;
-            const params = new URLSearchParams(window.location.search);
-            const currentWalletAddress = params.get('walletAddress');
-            if (currentWalletAddress) {
-                window.location.search = `?walletAddress=${currentWalletAddress}&tab=${tab}`;
-            } else {
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                tabPanes.forEach(pane => pane.classList.remove('active'));
-                button.classList.add('active');
-                document.getElementById(tab).classList.add('active');
-            }
+            const addresses = getAddressesFromUrl();
+            updateQuery(addresses, tab);
         });
     });
 
-    walletAddressDisplay.addEventListener('click', () => {
-        const params = new URLSearchParams(window.location.search);
-        let newWalletAddress = prompt("Enter wallet address:", params.get('walletAddress') || '');
-        if (newWalletAddress !== null && newWalletAddress.trim() !== "") {
-            const currentTab = params.get('tab') || 'tokens';
-            window.location.search = `?walletAddress=${newWalletAddress.trim()}&tab=${currentTab}`;
-        } else if (newWalletAddress !== null) {
-            const currentTab = params.get('tab') || 'tokens';
-            window.location.search = `?tab=${currentTab}`;
+    // Add address locally on Enter, no API call yet
+    addressInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const value = addressInput.value.trim();
+            if (!value) return;
+            const lower = value.toLowerCase();
+            const exists = addressesState.some(a => a.toLowerCase() === lower);
+            if (!exists) {
+                addressesState.push(value);
+                renderChips();
+            }
+            addressInput.value = '';
         }
     });
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const params = new URLSearchParams(window.location.search);
-        const tab = params.get('tab') || 'tokens';
+    // Remove chip locally on click (no API yet)
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('address-chip-remove')) {
+            const addr = e.target.getAttribute('data-address');
+            addressesState = addressesState.filter(a => a !== addr);
+            renderChips();
+        }
+    });
 
+    // When Search is clicked, push addressesState into the URL and reload (API call)
+    searchButton.addEventListener('click', () => {
+        const currentTab = getCurrentTab();
+        updateQuery(addressesState, currentTab);
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // Initialise addressesState from server-rendered chips (URL state)
+        addressesState = Array.from(document.querySelectorAll('.address-chip'))
+            .map(chip => chip.getAttribute('data-address'))
+            .filter(Boolean);
+
+        renderChips();
+
+        const tab = getCurrentTab();
         tabButtons.forEach(btn => btn.classList.remove('active'));
         tabPanes.forEach(pane => pane.classList.remove('active'));
 

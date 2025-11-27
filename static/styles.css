@@ -17,34 +17,122 @@
     }
     
     body {
-    font-family: var(--font-primary);
-    background-color: var(--color-bg-deep);
-    color: var(--color-text-secondary);
-    margin: 0;
-    padding: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    padding-top: 0;
-    padding-bottom: 0;
-    height: 100vh;
+        font-family: var(--font-primary);
+        background-color: var(--color-bg-deep);
+        color: var(--color-text-secondary);
+        margin: 0;
+        padding: 0;
     }
     
     .mobile-container {
-    width: 100%;
-    max-width: 420px;
-    height: 90vh;
-    max-height: 800px;
-    min-height: 600px;
-    background-color: var(--color-bg-container);
-    border-radius: 20px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    align-self: center;
-    box-shadow: 0 8px 32px rgba(20, 24, 41, 0.18), 0 1.5px 6px rgba(20, 24, 41, 0.10);
+        width: 100%;
+        max-width: 960px;
+        min-height: calc(100vh - 80px);
+        margin: 40px auto;
+        background-color: var(--color-bg-container);
+        border-radius: 20px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(20, 24, 41, 0.18),
+                    0 1.5px 6px rgba(20, 24, 41, 0.10);
     }
+    
+    
+    .address-section {
+        padding: 0 20px 10px 20px;
+        border-bottom: 1px solid var(--color-border-primary);
+    }
+    
+    .address-bar {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+    }
+    
+    .address-input-container {
+        flex: 1;
+        background-color: #191d30;
+        border-radius: 10px;
+        border: 1px solid var(--color-border-secondary);
+        padding: 6px 8px;
+        max-height: 80px;
+        overflow-y: auto;
+    }
+    
+    .address-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+    }
+    
+    .address-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 6px;
+        border-radius: 999px;
+        background-color: var(--color-placeholder-bg);
+        font-size: 0.75em;
+        font-family: var(--font-mono);
+        color: var(--color-text-primary);
+    }
+    
+    .address-chip-text {
+        margin-right: 4px;
+    }
+    
+    .address-chip-remove {
+        border: none;
+        background: transparent;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        padding: 0;
+        font-size: 0.9em;
+    }
+    
+    #address-input {
+        flex: 1;
+        min-width: 160px;
+        border: none;
+        outline: none;
+        background: transparent;
+        color: var(--color-text-primary);
+        font-size: 0.8em;
+        font-family: var(--font-mono);
+    }
+    
+    .address-search-button {
+        border-radius: 10px;
+        border: 1px solid var(--color-accent-purple);
+        background: var(--color-accent-purple);
+        color: #ffffff;
+        padding: 0 16px;
+        font-family: var(--font-primary);
+        font-size: 0.85em;
+        font-weight: 500;
+        cursor: pointer;
+        min-width: 80px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .address-search-button:hover {
+        opacity: 0.9;
+    }
+    
+    
+    .item-chain {
+        font-family: var(--font-primary);
+        font-size: 0.8em;
+        color: var(--color-text-subtle);
+        margin: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
     
     /* Header Styles */
     .app-header {
