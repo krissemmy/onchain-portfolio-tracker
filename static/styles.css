@@ -446,3 +446,33 @@
         opacity: 0.8;
         color: white;
     } 
+
+    .badge-up {
+        border-color: rgba(80, 227, 194, 0.5);
+        color: var(--color-accent-green);
+        background: rgba(80, 227, 194, 0.08);
+    }
+    .badge-down {
+        border-color: rgba(255, 120, 117, 0.5);
+        color: var(--color-accent-red);
+        background: rgba(255, 120, 117, 0.08);
+    }
+    
+    .total-balance-pnl {
+        font-family: var(--font-mono);
+        font-size: 0.9em;
+        margin: 4px 0;
+    }
+    
+    .pnl-up {
+        color: var(--color-accent-green);
+    }
+    
+    .pnl-down {
+        color: var(--color-accent-red);
+    }
+    
+    .pnl-neutral {
+        color: var(--color-text-muted);
+    }
+    

@@ -21,6 +21,13 @@
 
     <section class="total-balance-section">
         <p class="total-balance-amount">{{ totalWalletUSDValue or '$0.00' }}</p>
+
+        {% if totalPnLUSDFormatted %}
+            <p class="total-balance-pnl {{ totalPnLClass }}">
+                {{ totalPnLUSDFormatted }} 24h
+            </p>
+        {% endif %}
+
         <p class="total-balance-label">
             {% if walletAddresses and walletAddresses|length > 0 %}
                 Tracking {{ walletAddresses|length }} wallet{% if walletAddresses|length > 1 %}s{% endif %}

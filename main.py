@@ -81,6 +81,19 @@ def get_chain_label(token: Dict[str, Any]) -> str:
     else:
         return "Unknown chain"
 
+def format_signed_currency(value: Optional[float]) -> Optional[str]:
+    """
+    Format a signed USD amount like '+$123.45' or '-$12.34'.
+    """
+    if value is None:
+        return None
+    base = format_usd(abs(value)) or "$0.00"
+    if value == 0:
+        return base
+    sign = "+" if value > 0 else "-"
+    return f"{sign}{base}"
+
+
 # ---------- SIM API calls for a single wallet ----------
 
 async def get_wallet_balances(
@@ -398,10 +411,19 @@ async def get_portfolio(
 
     total_value = sum(t.get("valueUSDNumeric", 0.0) for t in portfolio_tokens.values())
 
+    # total 24h PnL across all tokens (Σ value * pct_change)
+    total_pnl_24h = 0.0
+    for t in portfolio_tokens.values():
+        change_pct = t.get("change24h")
+        value_num = t.get("valueUSDNumeric", 0.0)
+        if change_pct is not None and value_num is not None:
+            total_pnl_24h += float(value_num) * (float(change_pct) / 100.0)
+
     aggregated_tokens.sort(key=lambda x: x.get("valueUSDNumeric", 0.0), reverse=True)
     all_activities.sort(key=lambda x: x.get("block_time") or "", reverse=True)
 
-    return aggregated_tokens, all_activities, total_value
+    return aggregated_tokens, all_activities, total_value, total_pnl_24h
+
 
 
 # ---------- Route ----------
@@ -437,15 +459,24 @@ async def wallet_view(
 
     if wallets:
         try:
-            tokens, activities, total_wallet_usd_value_num = await get_portfolio(
+            tokens, activities, total_wallet_usd_value_num, total_pnl_usd_value = await get_portfolio(
                 wallets,
                 include_historical_prices=(tab == "tokens"),
             )
         except Exception as e:
+            total_pnl_usd_value = 0.0
             print("Error in route handler:", e)
             error_message = "Failed to fetch wallet data. Please try again."
+    else:
+        total_pnl_usd_value = 0.0
 
     total_wallet_usd_value = format_usd(total_wallet_usd_value_num)
+    total_pnl_usd_formatted = format_signed_currency(total_pnl_usd_value) if wallets else None
+
+    total_pnl_class = "pnl-neutral"
+    if wallets and total_pnl_usd_value != 0:
+        total_pnl_class = "pnl-up" if total_pnl_usd_value > 0 else "pnl-down"
+
 
     context = {
         "request": request,
@@ -459,6 +490,9 @@ async def wallet_view(
         "change6h": change6h,
         "change24h": change24h,
         "formatSignedPercent": format_signed_percent,
+        "totalPnLUSD": total_pnl_usd_value,
+        "totalPnLUSDFormatted": total_pnl_usd_formatted,
+        "totalPnLClass": total_pnl_class,
         "helpers": {
             "change1h": change1h,
             "change6h": change6h,
