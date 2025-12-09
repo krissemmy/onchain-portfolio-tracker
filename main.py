@@ -494,10 +494,42 @@ def token_key(token: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
         token.get("symbol"),
     )
 
+def token_matches_filter(token: Dict[str, Any], token_filter: Optional[str]) -> bool:
+    """
+    Case-insensitive match against contract address / mint / name / symbol.
+    If token_filter is empty/None, always returns True.
+    """
+    if not token_filter:
+        return True
+
+    f = token_filter.strip().lower()
+    if not f:
+        return True
+
+    tm = token.get("token_metadata") or {}
+
+    candidates = [
+        token.get("contract_address"),
+        token.get("address"),
+        token.get("mint"),
+        tm.get("address"),
+        token.get("symbol"),
+        token.get("name"),
+    ]
+
+    for v in candidates:
+        if not v:
+            continue
+        if f in str(v).lower():
+            return True
+
+    return False
+
 
 async def get_portfolio(
     wallets: List[str],
     include_historical_prices: bool,
+    token_filter: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float]:
     portfolio_tokens: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
     all_activities: List[Dict[str, Any]] = []
@@ -542,24 +574,32 @@ async def get_portfolio(
             all_activities.append(a)
 
     aggregated_tokens: List[Dict[str, Any]] = []
+    total_value = 0.0
+    total_pnl_24h = 0.0
+
     for t in portfolio_tokens.values():
-        t["value_usd"] = t.get("valueUSDNumeric", 0.0)
-        t["valueUSDFormatted"] = format_usd(t["value_usd"])
-        t["amountFormatted"] = format_amount_short(t.get("amountNumeric", 0.0))
+        # Apply token filter (by contract / mint / name / symbol), case-insensitive
+        if not token_matches_filter(t, token_filter):
+            continue
+
+        value_num = float(t.get("valueUSDNumeric", 0.0))
+        amount_num = float(t.get("amountNumeric", 0.0))
+
+        t["value_usd"] = value_num
+        t["valueUSDFormatted"] = format_usd(value_num)
+        t["amountFormatted"] = format_amount_short(amount_num)
         # make sure chain label is set for EVM + SVM
         t["chain_label"] = get_chain_label(t)
+
         aggregated_tokens.append(t)
+        total_value += value_num
 
-    total_value = sum(t.get("valueUSDNumeric", 0.0) for t in portfolio_tokens.values())
-
-    # total 24h PnL across all tokens (Σ value * pct_change)
-    # For SVM tokens, change24h will be None, so they naturally contribute 0 here.
-    total_pnl_24h = 0.0
-    for t in portfolio_tokens.values():
         change_pct = t.get("change24h")
-        value_num = t.get("valueUSDNumeric", 0.0)
-        if change_pct is not None and value_num is not None:
-            total_pnl_24h += float(value_num) * (float(change_pct) / 100.0)
+        if change_pct is not None:
+            try:
+                total_pnl_24h += value_num * (float(change_pct) / 100.0)
+            except Exception:
+                pass
 
     aggregated_tokens.sort(key=lambda x: x.get("valueUSDNumeric", 0.0), reverse=True)
     all_activities.sort(key=lambda x: x.get("block_time") or "", reverse=True)
@@ -579,6 +619,8 @@ async def api_portfolio(payload: dict = Body(...)):
     """
     wallets_raw = payload.get("walletAddresses") or []
     tab = payload.get("tab") or "tokens"
+    token_filter = payload.get("tokenFilter") or None
+
 
     # clean + dedupe
     wallets = []
@@ -610,6 +652,7 @@ async def api_portfolio(payload: dict = Body(...)):
         tokens, activities, total_value_num, total_pnl_num = await get_portfolio(
             wallets,
             include_historical_prices=(tab == "tokens"),
+            token_filter=token_filter,
         )
     except Exception as e:
         print("Error in /api/portfolio:", e)
@@ -635,6 +678,7 @@ async def api_portfolio(payload: dict = Body(...)):
     return {
         "walletAddresses": wallets,
         "currentTab": tab,
+        "tokenFilter": token_filter,        
         "totalWalletUSDValue": total_wallet_usd_value,
         "totalPnLUSD": total_pnl_num,
         "totalPnLUSDFormatted": total_pnl_usd_formatted,

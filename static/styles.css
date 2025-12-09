@@ -487,3 +487,34 @@
         margin: 10px 0 4px 0;
     }
     
+    /* Address section: a bit more bottom padding to separate from tabs */
+    /* .address-section {
+        padding: 0 20px 14px 20px;
+        border-bottom: 1px solid var(--color-border-primary);
+    } */
+
+    /* Filter bar: full width, aligned with address bar */
+    .filter-bar {
+        margin-top: 8px;
+        background-color: #191d30;
+        border-radius: 10px;
+        border: 1px solid var(--color-border-secondary);
+        padding: 6px 10px;
+    }
+
+    /* Filter input: same style as address input, just slightly larger */
+    .filter-input {
+        width: 100%;
+        border: none;
+        outline: none;
+        background: transparent;
+        color: var(--color-text-primary);
+        font-family: var(--font-mono);
+        font-size: 0.85em;
+        padding: 4px 0;
+        box-sizing: border-box;
+    }
+
+    .filter-input::placeholder {
+        color: var(--color-text-muted);
+    }

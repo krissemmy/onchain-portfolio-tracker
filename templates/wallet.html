@@ -41,6 +41,15 @@
                 Search
             </button>
         </div>
+    
+        <!-- Filter row, visually nested under address bar -->
+        <div class="filter-bar">
+            <input
+                type="text"
+                id="token-filter-input"
+                class="filter-input"
+                placeholder="Filter by token name or contract address (optional)" />
+        </div>
     </section>
 
     <nav class="tabs">
@@ -79,6 +88,9 @@
     const chipsContainer = document.getElementById('address-chips');
     const addressInput = document.getElementById('address-input');
     const searchButton = document.getElementById('address-search-button');
+    const tokenFilterInput = document.getElementById('token-filter-input');
+
+    let tokenFilterState = '';
 
     const totalBalanceAmountEl = document.getElementById('total-balance-amount');
     const totalBalancePnlEl = document.getElementById('total-balance-pnl');
@@ -308,6 +320,7 @@
                 body: JSON.stringify({
                     walletAddresses: addressesState,
                     tab: currentTab,
+                    tokenFilter: tokenFilterState || null,
                 }),
             });
             const data = await res.json();
@@ -374,6 +387,19 @@
                 renderChips();
             }
             addressInput.value = '';
+        }
+    });
+
+    // Track token filter (case-insensitive on backend)
+    tokenFilterInput.addEventListener('input', (e) => {
+        tokenFilterState = e.target.value.trim();
+    });
+
+    // Pressing Enter in the filter box also fetches portfolio
+    tokenFilterInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            fetchPortfolio();
         }
     });
 
