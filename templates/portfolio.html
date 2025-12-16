@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Krissemmy Portfolio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body class="portfolio-body">
+    <div class="portfolio-shell">
+        <header class="portfolio-hero">
+            <div>
+                <p class="eyebrow">Portfolio</p>
+                <h1 class="hero-title">Projects & Collaborations</h1>
+                <p class="hero-subtitle">
+                    Shipping tools for onchain data, infrastructure, and developer experience.
+                </p>
+            </div>
+            <a class="hero-cta" href="/wallet">Open Portfolio Tracker</a>
+        </header>
+
+        <section class="section-block">
+            <div class="section-heading">
+                <h2>Projects</h2>
+                <p class="section-subtitle">Hands-on work across infra, data, and web tools.</p>
+            </div>
+            <div class="card-grid">
+                {% for project in projects %}
+                <article class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">{{ project.title }}</h3>
+                        <div class="card-links">
+                            {% if project.live_url %}
+                            <a href="{{ project.live_url }}" target="_blank" rel="noopener">Live</a>
+                            {% endif %}
+                            <a href="{{ project.repo_url }}" target="_blank" rel="noopener">Repo</a>
+                        </div>
+                    </div>
+                    <p class="card-description">{{ project.description }}</p>
+                    {% if project.tech %}
+                    <div class="tag-row">
+                        {% for tag in project.tech %}
+                        <span class="tag">{{ tag }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="section-block">
+            <div class="section-heading">
+                <h2>Open Source</h2>
+                <p class="section-subtitle">Selective contributions that improve community tools.</p>
+            </div>
+            <div class="card-grid contributions-grid">
+                {% for oss in oss_contributions %}
+                <article class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">{{ oss.title }}</h3>
+                        <div class="card-links">
+                            <a href="{{ oss.repo_url }}" target="_blank" rel="noopener">Repo</a>
+                        </div>
+                    </div>
+                    <p class="card-description">{{ oss.description }}</p>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="section-block">
+            <div class="section-heading">
+                <h2>Contact</h2>
+                <p class="section-subtitle">Links stay on one line; email sits centered below.</p>
+            </div>
+            <div class="contact-row contact-row-primary">
+                {% for contact in primary_contacts %}
+                <a class="contact-card" href="{{ contact.url }}" target="_blank" rel="noopener">
+                    <p class="contact-name">{{ contact.name }}</p>
+                    <p class="contact-handle">{{ contact.handle }}</p>
+                </a>
+                {% endfor %}
+            </div>
+            <div class="contact-row contact-row-secondary">
+                {% for contact in secondary_contacts %}
+                <a class="contact-card" href="{{ contact.url }}" target="_blank" rel="noopener">
+                    <p class="contact-name">{{ contact.name }}</p>
+                    <p class="contact-handle">{{ contact.handle }}</p>
+                </a>
+                {% endfor %}
+            </div>
+        </section>
+    </div>
+</body>
+</html>

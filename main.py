@@ -29,6 +29,177 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+# -------- Portfolio content (static) --------
+# TODO: Verify descriptions against upstream READMEs when network access is available.
+
+CONTACTS = [
+    {
+        "name": "Twitter",
+        "handle": "@krissemmy",
+        "url": "https://twitter.com/krissemmy",
+        "group": "primary",
+    },
+    {
+        "name": "GitHub",
+        "handle": "krissemmy",
+        "url": "https://github.com/krissemmy",
+        "group": "primary",
+    },
+    {
+        "name": "LinkedIn",
+        "handle": "@krissemmy",
+        "url": "https://www.linkedin.com/in/krissemmy/",
+        "group": "primary",
+    },
+    {
+        "name": "Email",
+        "handle": "krissemmy@gmail.com",
+        "url": "mailto:krissemmy@gmail.com",
+        "group": "secondary",
+    },
+]
+
+PROJECTS = [
+    {
+        "title": "KraiNode",
+        "repo_url": "https://github.com/krissemmy/krainode-rpc-proxy",
+        "live_url": "https://krainode.krissemmy.com/",
+        "description": (
+            "Self-hosted RPC proxy that provides managed RPC endpoints with rate limits "
+            "and multi-region failover so developers can drop in a stable URL."
+        ),
+        "tech": ["Node", "RPC"],
+    },
+    {
+        "title": "Onchain Portfolio Tracker",
+        "repo_url": "https://github.com/krissemmy/onchain-portfolio-tracker",
+        "live_url": "https://portfolio.krissemmy.com/",
+        "description": (
+            "Web app that lets you paste multiple EVM wallets to view consolidated token "
+            "balances and 24h PnL in one screen."
+        ),
+        "tech": ["FastAPI", "Sim API"],
+    },
+    {
+        "title": "Node/RPC Benchmarking Devtool",
+        "repo_url": "https://github.com/krissemmy/evm-node-rpc-benchmark",
+        "live_url": "https://rpc.benchmark.krissemmy.com/",
+        "description": (
+            "Browser-based runner that hits RPC endpoints with configurable batches to measure "
+            "latency, throughput, and error rates before choosing a provider."
+        ),
+        "tech": ["Benchmarking", "RPC"],
+    },
+    {
+        "title": "Get Borrow APY for AaveV3 token",
+        "repo_url": "https://github.com/krissemmy/Get-borrow-apy-for-a-token-on-aaveV3",
+        "live_url": "https://get-borrow-apy-for-a-token-on-aave.krissemmy.com",
+        "description": (
+            "Small tool that returns the current borrow APR for any Aave V3 asset and shares a "
+            "direct link so users can check rates without opening the app."
+        ),
+        "tech": ["Aave", "Rates"],
+    },
+    {
+        "title": "Mattermost deployment with Kubernetes",
+        "repo_url": "https://github.com/krissemmy/mattermost-deployment-with-k8s",
+        "live_url": None,
+        "description": (
+            "Kubernetes manifests for a production-ready Mattermost rollout with ingress, TLS, "
+            "persistent storage, and autoscaling defaults."
+        ),
+        "tech": ["Kubernetes", "Ingress"],
+    },
+    {
+        "title": "Monitoring architecture with Kubernetes",
+        "repo_url": "https://github.com/krissemmy/monitoring-architecture-with-kubernetes",
+        "live_url": None,
+        "description": (
+            "Blueprint for deploying Alloy, Grafana, Loki, and Mimir on Kubernetes to collect "
+            "logs and metrics with persistent storage."
+        ),
+        "tech": ["Grafana", "Loki", "Mimir"],
+    },
+    {
+        "title": "EVM ETL pipeline using dlt",
+        "repo_url": "https://github.com/krissemmy/ETL-with-dlt",
+        "live_url": None,
+        "description": (
+            "Pipeline that ingests EVM chain data with dlt and lands it in a warehouse with reusable "
+            "transform steps for analytics."
+        ),
+        "tech": ["dlt", "ETL"],
+    },
+    {
+        "title": "HyperEVM node deployment with Kubernetes",
+        "repo_url": "https://github.com/krissemmy/hyperevm-node-k8s",
+        "live_url": None,
+        "description": (
+            "Kubernetes deployment files for running a HyperEVM full node with persistent volumes "
+            "and liveness probes for automated restarts."
+        ),
+        "tech": ["Kubernetes", "HyperEVM"],
+    },
+    {
+        "title": "IaC with Terraform",
+        "repo_url": "https://github.com/krissemmy/IaC-With-Terraform",
+        "live_url": None,
+        "description": (
+            "Terraform modules that spin up cloud networking, security groups, and compute defaults "
+            "to bootstrap new projects quickly."
+        ),
+        "tech": ["Terraform", "IaC"],
+    },
+    {
+        "title": "Polygon Finance data pipeline",
+        "repo_url": "https://github.com/krissemmy/Polygon-Finance-Data-ELT",
+        "live_url": None,
+        "description": (
+            "ELT workflow that extracts Polygon DeFi metrics and stages them for downstream dashboards "
+            "and analysis."
+        ),
+        "tech": ["Polygon", "ELT"],
+    },
+    {
+        "title": "Socrata API pipeline to GCS and BigQuery",
+        "repo_url": "https://github.com/krissemmy/Socrata-API-Data-To-BigQuery",
+        "live_url": None,
+        "description": (
+            "Connector that pulls Socrata open data into Google Cloud Storage and loads curated tables "
+            "into BigQuery on a schedule."
+        ),
+        "tech": ["BigQuery", "GCS"],
+    },
+    {
+        "title": "Hamoye CKD prediction (team project)",
+        "repo_url": "https://github.com/krissemmy/Team-GCP-Hamoye-HDSC-Spring-23-Capstone-Project",
+        "live_url": None,
+        "description": (
+            "Team-built model that predicts chronic kidney disease risk from lab results with explainability "
+            "artifacts for clinicians."
+        ),
+        "tech": ["ML", "Healthcare"],
+    },
+]
+
+OSS_CONTRIBUTIONS = [
+    {
+        "title": "HyperEVM node",
+        "repo_url": "https://github.com/krissemmy/node",
+        "description": "Documented node setup steps and defaults to simplify spinning up HyperEVM infrastructure.",
+    },
+    {
+        "title": "DeFiLlama Chainlist",
+        "repo_url": "https://github.com/krissemmy/chainlist",
+        "description": "Added chain metadata updates that keep DeFiLlama's network directory accurate for RPC consumers.",
+    },
+    {
+        "title": "EVM Tools",
+        "repo_url": "https://github.com/krissemmy/evm-tools",
+        "description": "Contributed utility fixes to improve address validation and network configuration helpers.",
+    },
+]
+
 EVM_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
@@ -689,6 +860,23 @@ async def api_portfolio(payload: dict = Body(...)):
 
 
 @app.get("/", response_class=HTMLResponse)
+async def portfolio_view(request: Request):
+    primary_contacts = [c for c in CONTACTS if c.get("group") == "primary"]
+    secondary_contacts = [c for c in CONTACTS if c.get("group") == "secondary"]
+
+    return templates.TemplateResponse(
+        "portfolio.html",
+        {
+            "request": request,
+            "projects": PROJECTS,
+            "oss_contributions": OSS_CONTRIBUTIONS,
+            "primary_contacts": primary_contacts,
+            "secondary_contacts": secondary_contacts,
+        },
+    )
+
+
+@app.get("/wallet", response_class=HTMLResponse)
 async def wallet_view(request: Request):
     context = {
         "request": request,

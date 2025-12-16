@@ -195,7 +195,7 @@
     }
     
     /* Tabs Section */
-    .tabs {
+.tabs {
     display: flex;
     border-bottom: 1px solid var(--color-border-primary);
     flex-shrink: 0;
@@ -518,3 +518,225 @@
     .filter-input::placeholder {
         color: var(--color-text-muted);
     }
+
+/* -------- Portfolio layout -------- */
+.portfolio-body {
+    background-color: var(--color-bg-deep);
+    color: var(--color-text-secondary);
+    font-family: var(--font-primary);
+    margin: 0;
+    padding: 0;
+}
+
+.portfolio-shell {
+    max-width: 1180px;
+    margin: 32px auto;
+    padding: 0 20px 48px 20px;
+}
+
+.portfolio-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    background: var(--color-bg-container);
+    border: 1px solid var(--color-border-primary);
+    border-radius: 18px;
+    padding: 28px 24px;
+    box-shadow: 0 8px 32px rgba(20, 24, 41, 0.18);
+}
+
+.eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.75em;
+    color: var(--color-text-muted);
+    margin: 0 0 6px 0;
+}
+
+.hero-title {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 1.8em;
+}
+
+.hero-subtitle {
+    margin: 6px 0 0 0;
+    color: var(--color-text-muted);
+}
+
+.hero-cta {
+    border-radius: 10px;
+    border: 1px solid var(--color-accent-purple);
+    background: var(--color-accent-purple);
+    color: #ffffff;
+    padding: 10px 16px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.section-block {
+    margin-top: 28px;
+    background: var(--color-bg-container);
+    border: 1px solid var(--color-border-primary);
+    border-radius: 18px;
+    padding: 22px 20px 26px 20px;
+}
+
+.section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.section-heading h2 {
+    margin: 0;
+    color: var(--color-text-primary);
+}
+
+.section-subtitle {
+    margin: 2px 0 0 0;
+    color: var(--color-text-muted);
+}
+
+.card-grid {
+    margin-top: 18px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+}
+
+.card {
+    background: #191d30;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 160px;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.card-title {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 1.05em;
+}
+
+.card-links {
+    display: flex;
+    gap: 10px;
+    font-size: 0.9em;
+}
+
+.card-links a {
+    color: var(--color-accent-purple);
+    text-decoration: none;
+}
+
+.card-description {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.4;
+}
+
+.tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tag {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--color-placeholder-bg);
+    color: var(--color-text-primary);
+    font-size: 0.8em;
+}
+
+.contributions-grid {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.contact-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.contact-row-primary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(200px, 1fr));
+}
+
+.contact-row-secondary {
+    justify-content: center;
+}
+
+.contact-card {
+    background: #191d30;
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 12px;
+    padding: 14px;
+    text-decoration: none;
+    color: var(--color-text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 96px;
+    min-width: 0;
+    max-width: 340px;
+}
+
+.contact-name {
+    margin: 0;
+    font-weight: 600;
+}
+
+.contact-handle {
+    margin: 0;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+    .portfolio-hero {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .contact-row-primary {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .portfolio-shell {
+        margin: 0 auto 28px auto;
+        padding: 0 14px 28px 14px;
+    }
+
+    .section-block {
+        padding: 18px 16px 22px 16px;
+    }
+
+    .contact-row {
+        flex-direction: column;
+    }
+
+    .contact-row-secondary {
+        align-items: stretch;
+    }
+}
