@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import os
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -11,17 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Body
 
-from utils.prices import change1h, change6h, change24h, format_signed_percent
-from typing import Any, Dict, List, Optional
+from utils.prices import format_signed_percent
 import re
 from base58 import b58decode
 # Load env vars
 load_dotenv()
 
-SIM_API_KEY = os.getenv("SIM_API_KEY")
+ZERION_API_KEY = os.getenv("ZERION_API_KEY")
 
-if not SIM_API_KEY:
-    raise RuntimeError("FATAL ERROR: SIM_API_KEY is not set in environment (.env)")
+if not ZERION_API_KEY:
+    raise RuntimeError("FATAL ERROR: ZERION_API_KEY is not set in environment (.env)")
 
 app = FastAPI()
 
@@ -31,6 +32,24 @@ templates = Jinja2Templates(directory="templates")
 
 EVM_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+ZERION_API_BASE = "https://api.zerion.io/v1"
+
+CHAIN_LABELS = {
+    "abstract": "Abstract",
+    "arbitrum": "Arbitrum",
+    "avalanche": "Avalanche",
+    "base": "Base",
+    "binance-smart-chain": "BNB Chain",
+    "blast": "Blast",
+    "ethereum": "Ethereum",
+    "linea": "Linea",
+    "optimism": "Optimism",
+    "polygon": "Polygon",
+    "scroll": "Scroll",
+    "solana": "Solana",
+    "svm": "Solana",
+    "zksync-era": "zkSync Era",
+}
 
 # ---------- Helpers ----------
 
@@ -106,7 +125,10 @@ def get_chain_label(token: Dict[str, Any]) -> str:
 
     # If we have a string like "base", "ethereum"
     if isinstance(chain_name, str) and not str(chain_name).isdigit():
-        return chain_name.capitalize()
+        return CHAIN_LABELS.get(
+            chain_name,
+            chain_name.replace("_", " ").replace("-", " ").title(),
+        )
     else:
         return "Unknown chain"
 
@@ -123,7 +145,220 @@ def format_signed_currency(value: Optional[float]) -> Optional[str]:
     return f"{sign}{base}"
 
 
-# ---------- SIM API calls for a single wallet ----------
+# ---------- Zerion API calls for a single wallet ----------
+
+def zerion_headers() -> Dict[str, str]:
+    token = base64.b64encode(f"{ZERION_API_KEY}:".encode("utf-8")).decode("ascii")
+    return {
+        "Authorization": f"Basic {token}",
+        "Accept": "application/json",
+    }
+
+
+async def zerion_get(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Optional[Dict[str, Any]],
+    label: str,
+) -> Optional[httpx.Response]:
+    for attempt in range(3):
+        resp = await client.get(url, headers=zerion_headers(), params=params)
+        if resp.status_code != 429:
+            return resp
+        if attempt < 2:
+            await asyncio.sleep(1.2 * (attempt + 1))
+
+    print(
+        f"Zerion {label} API failed {resp.status_code}: "
+        f"{resp.reason_phrase} {resp.text}"
+    )
+    return None
+
+
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def extract_address(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return None
+
+    attrs = value.get("attributes") or {}
+    return (
+        value.get("address")
+        or value.get("id")
+        or attrs.get("address")
+        or attrs.get("hash")
+    )
+
+
+def quantity_to_float(quantity: Any) -> Optional[float]:
+    if not isinstance(quantity, dict):
+        return None
+
+    numeric = first_present(
+        quantity.get("float"),
+        quantity.get("numeric"),
+        quantity.get("value"),
+    )
+    if numeric is not None:
+        d_numeric = safe_decimal(numeric)
+        if d_numeric is not None:
+            return float(d_numeric)
+
+    integer_raw = first_present(quantity.get("int"), quantity.get("integer"))
+    decimals_raw = quantity.get("decimals")
+    d_integer = safe_decimal(integer_raw)
+    if d_integer is None or decimals_raw is None:
+        return None
+
+    try:
+        decimals = int(decimals_raw)
+        return float(d_integer / (Decimal(10) ** decimals))
+    except Exception:
+        return None
+
+
+def clean_symbol(symbol: Optional[str]) -> str:
+    if not symbol:
+        return ""
+    symbol = symbol.replace("$", "")
+    for sep in [" ", "-", "["]:
+        symbol = symbol.split(sep)[0]
+    return symbol[:12]
+
+
+def zerion_chain_from_item(item: Dict[str, Any]) -> str:
+    relationships = item.get("relationships") or {}
+    chain_data = (relationships.get("chain") or {}).get("data") or {}
+    chain_id = chain_data.get("id")
+    if isinstance(chain_id, str) and chain_id:
+        return chain_id
+
+    attrs = item.get("attributes") or {}
+    chain = attrs.get("chain") or attrs.get("chain_id")
+    if isinstance(chain, str) and chain:
+        return chain
+
+    return "unknown"
+
+
+def normalize_zerion_position(position: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    attrs = position.get("attributes") or {}
+    fungible_info = attrs.get("fungible_info") or {}
+
+    symbol = clean_symbol(fungible_info.get("symbol") or attrs.get("symbol"))
+    name = fungible_info.get("name") or attrs.get("name") or symbol or "Token"
+
+    if symbol == "RTFKT":
+        return None
+
+    chain = zerion_chain_from_item(position)
+    implementations = fungible_info.get("implementations") or []
+    implementation = None
+    for candidate in implementations:
+        if candidate.get("chain_id") == chain:
+            implementation = candidate
+            break
+    if implementation is None and implementations:
+        implementation = implementations[0]
+    implementation = implementation or {}
+
+    contract_address = (
+        implementation.get("address")
+        or fungible_info.get("id")
+        or position.get("id")
+    )
+    if not contract_address:
+        contract_address = f"{chain}:{symbol or name}"
+
+    quantity = attrs.get("quantity") or {}
+    amount_numeric = quantity_to_float(quantity)
+
+    value_usd = None
+    d_value = safe_decimal(attrs.get("value"))
+    if d_value is not None:
+        value_usd = float(d_value)
+    if value_usd is None or value_usd <= 0:
+        return None
+
+    price = None
+    d_price = safe_decimal(attrs.get("price"))
+    if d_price is not None:
+        price = float(d_price)
+
+    changes = attrs.get("changes") or {}
+    change_24h = first_present(
+        changes.get("percent_1d"),
+        changes.get("relative_1d"),
+        changes.get("percent_24h"),
+        changes.get("relative_24h"),
+    )
+    d_change_24h = safe_decimal(change_24h)
+    change_24h_float = float(d_change_24h) if d_change_24h is not None else None
+
+    change_24h_usd = first_present(
+        changes.get("absolute_1d"),
+        changes.get("value_1d"),
+        changes.get("absolute_24h"),
+        changes.get("value_24h"),
+    )
+    d_change_24h_usd = safe_decimal(change_24h_usd)
+    change_24h_usd_float = (
+        float(d_change_24h_usd) if d_change_24h_usd is not None else None
+    )
+
+    icon = fungible_info.get("icon") or {}
+    logo = icon.get("url") if isinstance(icon, dict) else None
+    external_links = fungible_info.get("external_links") or {}
+    url = external_links.get("homepage") or external_links.get("website")
+
+    token_metadata = {
+        "name": name,
+        "symbol": symbol,
+        "logo": logo,
+        "url": url,
+        "price_usd": price,
+    }
+
+    show_badge = change_24h_float is not None
+    badge_class = "badge-up" if (change_24h_float or 0) >= 0 else "badge-down"
+    badge_label = (
+        format_signed_percent(change_24h_float)
+        if change_24h_float is not None
+        else None
+    )
+
+    return {
+        "id": position.get("id"),
+        "chain": chain,
+        "chain_id": chain,
+        "contract_address": contract_address,
+        "asset_type": attrs.get("position_type") or attrs.get("type") or "token",
+        "name": name,
+        "symbol": symbol,
+        "decimals": quantity.get("decimals"),
+        "amount": quantity.get("int") or quantity.get("numeric"),
+        "price_usd": price,
+        "value_usd": value_usd or 0.0,
+        "token_metadata": token_metadata,
+        "valueUSDFormatted": format_usd(value_usd),
+        "amountFormatted": (
+            format_amount_short(amount_numeric) if amount_numeric is not None else None
+        ),
+        "change24h": change_24h_float,
+        "change24hUSDNumeric": change_24h_usd_float,
+        "change24hBadgeClass": badge_class if show_badge else None,
+        "change24hBadgeLabel": badge_label if show_badge else None,
+        "chain_label": CHAIN_LABELS.get(chain, chain.replace("-", " ").title()),
+        "amountNumeric": amount_numeric if amount_numeric is not None else 0.0,
+        "valueUSDNumeric": value_usd if value_usd is not None else 0.0,
+    }
 
 async def get_wallet_balances(
     wallet_address: str,
@@ -132,350 +367,225 @@ async def get_wallet_balances(
     if not wallet_address:
         return []
 
-    query_parts = [
-        "metadata=url,logo",
-        "exclude_spam_tokens",
-    ]
-    if include_historical_prices:
-        query_parts.append("historical_prices=1,6,24")
-
-    url = (
-        f"https://api.sim.dune.com/v1/evm/balances/"
-        f"{wallet_address}?{'&'.join(query_parts)}"
-    )
-
-    headers = {
-        "X-Sim-Api-Key": SIM_API_KEY,
-        "Content-Type": "application/json",
+    url = f"{ZERION_API_BASE}/wallets/{wallet_address}/positions/"
+    params = {
+        "currency": "usd",
+        "filter[positions]": "only_simple",
+        "filter[trash]": "only_non_trash",
+        "sort": "-value",
+        "page[size]": 100,
     }
+    if include_historical_prices:
+        params["filter[changes]"] = "1d"
 
+    positions: List[Dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=20.0) as client:
         try:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                body = resp.text
-                print(f"Balances API failed {resp.status_code}: {resp.reason_phrase} {body}")
-                return []
+            while url:
+                resp = await zerion_get(client, url, params, "positions")
+                params = None
+                if resp is None:
+                    return []
+                if resp.status_code != 200:
+                    body = resp.text
+                    print(
+                        f"Zerion positions API failed {resp.status_code}: "
+                        f"{resp.reason_phrase} {body}"
+                    )
+                    return []
 
-            data = resp.json()
+                data = resp.json()
+                positions.extend(data.get("data", []) or [])
+                links = data.get("links") or {}
+                url = links.get("next")
+                if len(positions) >= 500:
+                    break
         except Exception as e:
             print("Error fetching wallet balances:", e)
             return []
 
-    balances = data.get("balances", []) or []
     enriched: List[Dict[str, Any]] = []
-
-    for token in balances:
-        # decimals and amount
-        decimals_raw = token.get("decimals")
-        amount_raw = token.get("amount")
-
-        decimals = None
-        amount_numeric = None
-        try:
-            if decimals_raw is not None:
-                decimals = int(decimals_raw)
-            if amount_raw is not None and decimals is not None and decimals >= 0:
-                amount_int = safe_decimal(amount_raw)
-                if amount_int is not None:
-                    amount_numeric = float(amount_int / (Decimal(10) ** decimals))
-        except Exception:
-            amount_numeric = None
-
-        # USD value
-        value_usd_raw = token.get("value_usd")
-        value_usd = None
-        d_value = safe_decimal(value_usd_raw)
-        if d_value is not None:
-            value_usd = float(d_value)
-
-        value_usd_formatted = format_usd(value_usd)
-        amount_formatted = (
-            format_amount_short(amount_numeric) if amount_numeric is not None else None
-        )
-
-        # 24h change badge
-        price = None
-
-        price_usd = token.get("price_usd")
-        token_metadata = token.get("token_metadata") or {}
-        if isinstance(price_usd, (int, float)):
-            price = float(price_usd)
-        elif isinstance(token_metadata.get("price_usd"), (int, float)):
-            price = float(token_metadata["price_usd"])
-
-        hist = token.get("historical_prices") or token_metadata.get("historical_prices")
-
-        d24 = change24h(price, hist) if price is not None else None
-        low_liquidity = bool(token.get("low_liquidity"))
-
-        show_badge = d24 is not None and not low_liquidity
-        badge_class = "badge-up" if (d24 or 0) >= 0 else "badge-down"
-        badge_label = format_signed_percent(d24) if d24 is not None else None
-
-        # Filter out RTFKT like original
-        if token.get("symbol") == "RTFKT":
-            continue
-
-        enriched.append(
-            {
-                **token,
-                "valueUSDFormatted": value_usd_formatted,
-                "amountFormatted": amount_formatted,
-                "change24h": d24,
-                "change24hBadgeClass": badge_class if show_badge else None,
-                "change24hBadgeLabel": badge_label if show_badge else None,
-                "chain_label": get_chain_label(token),
-                # numeric helpers for aggregation
-                "amountNumeric": amount_numeric if amount_numeric is not None else 0.0,
-                "valueUSDNumeric": value_usd if value_usd is not None else 0.0,
-            }
-        )
+    for position in positions:
+        token = normalize_zerion_position(position)
+        if token is not None:
+            enriched.append(token)
 
     return enriched
+
 
 async def get_svm_balances(wallet_address: str) -> List[Dict[str, Any]]:
-    """
-    Fetch SVM (Solana / Eclipse) balances for a given address.
-    Endpoint: https://api.sim.dune.com/beta/svm/balances/{address}
+    return await get_wallet_balances(wallet_address, include_historical_prices=False)
 
-    Returns tokens enriched similarly to get_wallet_balances():
-      - amountNumeric
-      - valueUSDNumeric
-      - valueUSDFormatted
-      - amountFormatted
-      - change24h = None (no historical yet)
-    """
-    if not wallet_address:
-        return []
 
-    url = f"https://api.sim.dune.com/beta/svm/balances/{wallet_address}"
+def select_primary_transfer(
+    transfers: List[Dict[str, Any]],
+    wallet_address: str,
+) -> Optional[Dict[str, Any]]:
+    if not transfers:
+        return None
 
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                url,
-                headers={
-                    "X-Sim-Api-Key": SIM_API_KEY,
-                    "Content-Type": "application/json",
-                },
-            )
-        if resp.status_code != 200:
-            print(
-                "SVM balances request failed:",
-                resp.status_code,
-                resp.text[:500],
-            )
-            return []
-        data = resp.json()
-    except Exception as e:
-        print("Error fetching SVM balances:", e)
-        return []
+    wallet_lower = wallet_address.lower()
 
-    balances = data.get("balances") or []
-    enriched: List[Dict[str, Any]] = []
+    def score(transfer: Dict[str, Any]) -> int:
+        fungible_info = transfer.get("fungible_info") or {}
+        symbol = fungible_info.get("symbol")
+        value = safe_decimal(transfer.get("value"))
+        sender = extract_address(transfer.get("sender"))
+        recipient = extract_address(transfer.get("recipient"))
+        direction_score = 1 if (
+            (sender and sender.lower() == wallet_lower)
+            or (recipient and recipient.lower() == wallet_lower)
+        ) else 0
+        value_score = 1 if value is not None and value > 0 else 0
+        symbol_score = 1 if symbol else 0
+        return direction_score + value_score + symbol_score
 
-    for token in balances:
-        t = dict(token)
+    return max(transfers, key=score)
 
-        # Chain marker
-        chain = (t.get("chain") or "").lower()
-        t["chain"] = chain
 
-        # Normalise identifiers so your token_key works
-        # (chain_id can be a string for SVM, contract_address uses mint/address)
-        chain_id = t.get("chain_id")
-        if chain_id is None:
-            chain_id = chain or "svm"
-        t["chain_id"] = chain_id
+def normalize_transfer_direction(
+    transfer: Dict[str, Any],
+    wallet_address: str,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    raw_direction = str(
+        transfer.get("direction")
+        or transfer.get("type")
+        or transfer.get("effect")
+        or ""
+    ).lower()
 
-        contract_addr = t.get("contract_address") or t.get("mint") or t.get("address") or "svm-native"
-        t["contract_address"] = contract_addr
-        t["asset_type"] = t.get("asset_type") or "svm"
+    sender = extract_address(transfer.get("sender"))
+    recipient = extract_address(transfer.get("recipient"))
+    wallet_lower = wallet_address.lower()
 
-        # decimals + amountNumeric
-        decimals_raw = t.get("decimals")
-        amount_raw = t.get("amount")
-        decimals = None
-        amount_numeric = None
-        try:
-            if decimals_raw is not None:
-                decimals = int(decimals_raw)
-            if amount_raw is not None and decimals is not None and decimals >= 0:
-                amt_dec = safe_decimal(amount_raw)
-                if amt_dec is not None:
-                    amount_numeric = float(amt_dec / (Decimal(10) ** decimals))
-        except Exception:
-            amount_numeric = None
+    if raw_direction in ("in", "incoming", "receive", "received"):
+        return "receive", "From", sender
+    if raw_direction in ("out", "outgoing", "send", "sent"):
+        return "send", "To", recipient
 
-        # valueUSDNumeric
-        value_usd_raw = t.get("value_usd")
-        value_usd_num = None
-        d_val = safe_decimal(value_usd_raw)
-        if d_val is not None:
-            value_usd_num = float(d_val)
+    if recipient and recipient.lower() == wallet_lower:
+        return "receive", "From", sender
+    if sender and sender.lower() == wallet_lower:
+        return "send", "To", recipient
 
-        # display formatting
-        t["amountNumeric"] = amount_numeric or 0.0
-        t["valueUSDNumeric"] = value_usd_num or 0.0
-        t["valueUSDFormatted"] = format_usd(value_usd_num) if value_usd_num is not None else None
-        t["amountFormatted"] = (
-            format_amount_short(amount_numeric) if amount_numeric is not None else None
+    return "call", "With", recipient or sender
+
+
+def normalize_zerion_transaction(
+    tx: Dict[str, Any],
+    wallet_address: str,
+) -> Dict[str, Any]:
+    attrs = tx.get("attributes") or {}
+    operation_type = attrs.get("operation_type") or attrs.get("type") or "call"
+    transfers = attrs.get("transfers") or []
+    primary_transfer = select_primary_transfer(transfers, wallet_address)
+
+    t = "call"
+    party_label = "With"
+    party_address = None
+    amount_display = None
+    symbol_display = None
+    direction_prefix = ""
+
+    if primary_transfer:
+        t, party_label, party_address = normalize_transfer_direction(
+            primary_transfer,
+            wallet_address,
         )
 
-        # No historical_prices for SVM yet
-        t["change24h"] = None
-        t["change24hBadgeLabel"] = None
-        t["change24hBadgeClass"] = "badge-neutral"
+        fungible_info = primary_transfer.get("fungible_info") or {}
+        symbol_display = clean_symbol(fungible_info.get("symbol"))
+        amount_numeric = quantity_to_float(primary_transfer.get("quantity") or {})
+        if amount_numeric is not None:
+            if 0 < abs(amount_numeric) < 0.0001:
+                amount_display = "<0.0001"
+            else:
+                amount_display = f"{amount_numeric:.6f}".rstrip("0").rstrip(".")
 
-        enriched.append(t)
+            if abs(amount_numeric) > 1e12 or len(amount_display) > 12:
+                amount_display = f"{amount_numeric:.2e}"
 
-    return enriched
+        if t == "receive":
+            direction_prefix = "+"
+        elif t == "send":
+            direction_prefix = "-"
+
+    activity_title = str(operation_type).replace("_", " ").title()
+    if primary_transfer and t in ("receive", "send"):
+        verb = "Received" if t == "receive" else "Sent"
+        activity_title = f"{verb} {symbol_display or 'Token'}"
+
+    party_address_short = None
+    if party_address:
+        party_address_short = f"{party_address[:6]}...{party_address[-4:]}"
+
+    block_time = (
+        attrs.get("mined_at")
+        or attrs.get("block_time")
+        or attrs.get("created_at")
+    )
+    block_time_display = None
+    if isinstance(block_time, str):
+        try:
+            dt = datetime.fromisoformat(block_time.replace("Z", "+00:00"))
+            block_time_display = dt.strftime("%Y-%m-%d")
+        except Exception:
+            block_time_display = block_time
+
+    transaction_hash = (
+        attrs.get("hash")
+        or attrs.get("transaction_hash")
+        or tx.get("id")
+    )
+
+    return {
+        "id": tx.get("id"),
+        "type": t,
+        "hash": transaction_hash,
+        "block_time": block_time,
+        "activityTitle": activity_title,
+        "activityColorClass": t,
+        "partyLabel": party_label,
+        "partyAddressShort": party_address_short,
+        "blockTimeDisplay": block_time_display,
+        "amountDisplay": amount_display,
+        "symbolDisplay": symbol_display,
+        "directionPrefix": direction_prefix,
+    }
 
 
 async def get_wallet_activity(wallet_address: str, limit: int = 25) -> List[Dict[str, Any]]:
     if not wallet_address:
         return []
 
-    url = f"https://api.sim.dune.com/v1/evm/activity/{wallet_address}?limit={limit}"
-    headers = {
-        "X-Sim-Api-Key": SIM_API_KEY,
-        "Content-Type": "application/json",
+    url = f"{ZERION_API_BASE}/wallets/{wallet_address}/transactions/"
+    params = {
+        "currency": "usd",
+        "page[size]": limit,
     }
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         try:
-            resp = await client.get(url, headers=headers)
+            resp = await zerion_get(client, url, params, "transactions")
+            if resp is None:
+                return []
             if resp.status_code != 200:
                 body = resp.text
-                print(f"Activity API failed {resp.status_code}: {resp.reason_phrase} {body}")
+                print(
+                    f"Zerion transactions API failed {resp.status_code}: "
+                    f"{resp.reason_phrase} {body}"
+                )
                 return []
             data = resp.json()
         except Exception as e:
             print("Error fetching wallet activity:", e)
             return []
 
-    raw_activities = data.get("activity", []) or []
-    normalized: List[Dict[str, Any]] = []
-
-    for a in raw_activities:
-        t = a.get("type", "")
-        token_md = a.get("token_metadata") or {}
-        asset_type = a.get("asset_type")
-        chain_id = a.get("chain_id")
-
-        # Title and color class
-        activity_title = t.capitalize()
-        activity_color_class = t
-
-        if t == "call" and a.get("function") and a["function"].get("name"):
-            activity_title = f"Call: {a['function']['name']}"
-            activity_color_class = "call"
-        elif t in ("receive", "send"):
-            symbol = token_md.get("symbol")
-            if not symbol:
-                if asset_type == "native":
-                    if chain_id in (1, 8453, 10):
-                        symbol = "ETH"
-                    else:
-                        symbol = "Native"
-                else:
-                    symbol = "Token"
-            activity_title = ("Received " if t == "receive" else "Sent ") + symbol
-
-        # party label / address
-        if t == "receive":
-            party_label = "From"
-            party_address = a.get("from")
-        elif t == "send":
-            party_label = "To"
-            party_address = a.get("to")
-        elif t == "call":
-            party_label = "Contract"
-            party_address = a.get("to")
-        else:
-            party_label = "With"
-            party_address = a.get("to") or a.get("from") or "Unknown"
-
-        if party_address and party_address != "Unknown":
-            short_addr = f"{party_address[:6]}...{party_address[-4:]}"
-        else:
-            short_addr = None
-
-        # timestamp display
-        block_time = a.get("block_time")
-        block_time_display = None
-        if isinstance(block_time, str):
-            try:
-                dt = datetime.fromisoformat(block_time.replace("Z", "+00:00"))
-                block_time_display = dt.strftime("%Y-%m-%d")
-            except Exception:
-                block_time_display = block_time
-
-        # amount & symbol (numeric)
-        amount_display = None
-        symbol_display = None
-        direction_prefix = ""
-
-        value_raw = a.get("value")
-        if value_raw is not None:
-            decimals = token_md.get("decimals")
-            if decimals is None:
-                decimals = 18
-            try:
-                decimals = int(decimals)
-            except Exception:
-                decimals = 18
-
-            val = safe_decimal(value_raw)
-            if val is not None:
-                scaled = float(val / (Decimal(10) ** decimals))
-
-                # small-value handling
-                if 0 < abs(scaled) < 0.0001:
-                    amount_display = "<0.0001"
-                else:
-                    amount_display = f"{scaled:.6f}".rstrip("0").rstrip(".")
-
-                # large-value handling
-                if abs(scaled) > 1e12 or len(amount_display) > 12:
-                    amount_display = f"{scaled:.2e}"
-
-                symbol = token_md.get("symbol")
-                if not symbol:
-                    if asset_type == "native":
-                        if chain_id in (1, 8453, 10):
-                            symbol = "ETH"
-                        else:
-                            symbol = "NTV"
-                    else:
-                        symbol = "Tokens"
-
-                symbol = symbol.replace("$", "")
-                for sep in [" ", "-", "["]:
-                    symbol = symbol.split(sep)[0]
-                symbol = symbol[:8]
-
-                symbol_display = symbol
-
-                if t == "receive":
-                    direction_prefix = "+"
-                elif t == "send":
-                    direction_prefix = "-"
-
-        normalized.append(
-            {
-                **a,
-                "activityTitle": activity_title,
-                "activityColorClass": activity_color_class,
-                "partyLabel": party_label,
-                "partyAddressShort": short_addr,
-                "blockTimeDisplay": block_time_display,
-                "amountDisplay": amount_display,
-                "symbolDisplay": symbol_display,
-                "directionPrefix": direction_prefix,
-            }
-        )
+    raw_activities = data.get("data", []) or []
+    normalized = [
+        normalize_zerion_transaction(activity, wallet_address)
+        for activity in raw_activities
+    ]
 
     return normalized
 
@@ -529,6 +639,7 @@ def token_matches_filter(token: Dict[str, Any], token_filter: Optional[str]) -> 
 async def get_portfolio(
     wallets: List[str],
     include_historical_prices: bool,
+    include_activities: bool,
     token_filter: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float]:
     portfolio_tokens: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
@@ -539,11 +650,11 @@ async def get_portfolio(
         # EVM Address
         if chain_type == "evm":
             tokens = await get_wallet_balances(addr, include_historical_prices)
-            activities = await get_wallet_activity(addr, 25)
+            activities = await get_wallet_activity(addr, 25) if include_activities else []
         # SVM Address
         elif chain_type == "svm":
             tokens = await get_svm_balances(addr)
-            activities = [] 
+            activities = await get_wallet_activity(addr, 25) if include_activities else []
 
         else:
             # unknown or invalid address
@@ -554,6 +665,7 @@ async def get_portfolio(
             key = token_key(t)
             amount_num = float(t.get("amountNumeric") or 0.0)
             value_num = float(t.get("valueUSDNumeric") or 0.0)
+            change_24h_usd_num = t.get("change24hUSDNumeric")
 
             existing = portfolio_tokens.get(key)
             if existing is None:
@@ -565,6 +677,10 @@ async def get_portfolio(
             else:
                 existing["amountNumeric"] += amount_num
                 existing["valueUSDNumeric"] += value_num
+                if change_24h_usd_num is not None:
+                    existing["change24hUSDNumeric"] = float(
+                        existing.get("change24hUSDNumeric") or 0.0
+                    ) + float(change_24h_usd_num)
                 if addr not in existing["source_wallets"]:
                     existing["source_wallets"].append(addr)
 
@@ -594,12 +710,19 @@ async def get_portfolio(
         aggregated_tokens.append(t)
         total_value += value_num
 
-        change_pct = t.get("change24h")
-        if change_pct is not None:
+        change_usd = t.get("change24hUSDNumeric")
+        if change_usd is not None:
             try:
-                total_pnl_24h += value_num * (float(change_pct) / 100.0)
+                total_pnl_24h += float(change_usd)
             except Exception:
                 pass
+        else:
+            change_pct = t.get("change24h")
+            if change_pct is not None:
+                try:
+                    total_pnl_24h += value_num * (float(change_pct) / 100.0)
+                except Exception:
+                    pass
 
     aggregated_tokens.sort(key=lambda x: x.get("valueUSDNumeric", 0.0), reverse=True)
     all_activities.sort(key=lambda x: x.get("block_time") or "", reverse=True)
@@ -652,6 +775,7 @@ async def api_portfolio(payload: dict = Body(...)):
         tokens, activities, total_value_num, total_pnl_num = await get_portfolio(
             wallets,
             include_historical_prices=(tab == "tokens"),
+            include_activities=(tab == "activity"),
             token_filter=token_filter,
         )
     except Exception as e:
